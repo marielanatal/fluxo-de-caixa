@@ -31,14 +31,8 @@ def calcular_data_real(row):
 def formatar_real(valor):
     return f"R$ {valor:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
 
-def estilo_negativo(val):
-    try:
-        val_num = float(val)
-        if val_num < 0:
-            return "color: red; font-weight: bold;"
-    except:
-        pass
-    return ""
+def cor_negativo(valor):
+    return "color: red; font-weight: bold;" if valor < 0 else ""
 
 # =========================
 # INPUTS
@@ -58,7 +52,6 @@ url_planilha = st.text_input(
 # PROCESSAMENTO
 # =========================
 if url_planilha:
-
     try:
         df = pd.read_excel(url_planilha)
 
@@ -78,7 +71,7 @@ if url_planilha:
         df["DATA_REAL"] = df.apply(calcular_data_real, axis=1)
         df["DATA_REAL"] = pd.to_datetime(df["DATA_REAL"]).dt.date
 
-        # Receitas e despesas por dia
+        # Receitas e despesas
         receitas = (
             df[df["TIPO"] == "RECEITA"]
             .groupby("DATA_REAL")["VALOR"]
@@ -112,19 +105,15 @@ if url_planilha:
         col3.metric("Resultado no Período", formatar_real(quadro["RESULTADO"].sum()))
 
         # =========================
-        # TABELA FORMATADA
+        # TABELA COM ESTILO CORRETO
         # =========================
-        quadro_exibicao = quadro.copy()
-
-        quadro_exibicao["DATA_REAL"] = pd.to_datetime(
-            quadro_exibicao["DATA_REAL"]
+        quadro_display = quadro.copy()
+        quadro_display["DATA_REAL"] = pd.to_datetime(
+            quadro_display["DATA_REAL"]
         ).dt.strftime("%d/%m/%Y")
 
-        for col in ["RECEITA", "DESPESA", "RESULTADO", "SALDO"]:
-            quadro_exibicao[col] = quadro_exibicao[col].apply(formatar_real)
-
         styled = (
-            quadro_exibicao
+            quadro_display
             .rename(columns={
                 "DATA_REAL": "Data",
                 "RECEITA": "Receita",
@@ -133,7 +122,13 @@ if url_planilha:
                 "SALDO": "Saldo"
             })
             .style
-            .applymap(estilo_negativo, subset=["Resultado do Dia", "Saldo"])
+            .format({
+                "Receita": formatar_real,
+                "Despesa": formatar_real,
+                "Resultado do Dia": formatar_real,
+                "Saldo": formatar_real
+            })
+            .applymap(cor_negativo, subset=["Resultado do Dia", "Saldo"])
         )
 
         st.subheader("📅 Quadro de Fluxo de Caixa Diário")
@@ -147,4 +142,5 @@ if url_planilha:
     except Exception as e:
         st.error("Erro ao processar a planilha.")
         st.exception(e)
+
 
