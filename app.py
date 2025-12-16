@@ -7,7 +7,7 @@ import streamlit.components.v1 as components
 # =========================
 # CONFIGURAÇÃO
 # =========================
-st.set_page_config(page_title="Fluxo de Caixa Diário", layout="wide")
+st.set_page_config(page_title="Fluxo de Caixa Projetado", layout="wide")
 
 # =========================
 # TOPO
@@ -25,32 +25,25 @@ URL_PLANILHA = "https://raw.githubusercontent.com/marielanatal/fluxo-de-caixa/ma
 cal = Brazil()
 
 # =========================
-# FUNÇÕES
+# FUNÇÕES DE DATA (ÚNICA REGRA)
 # =========================
 def proximo_dia_util(data):
-    # Ajusta a data para o próximo dia útil, considerando finais de semana
-    data += timedelta(days=1)
+    """Avança até encontrar um dia útil (segunda a sexta, sem feriados)."""
     while not cal.is_working_day(data):
         data += timedelta(days=1)
     return data
 
-def ajustar_para_segunda(data):
-    # Se a data cair em um sábado ou domingo, ajusta para segunda-feira
-    if data.weekday() == 5:  # Sábado
-        data += timedelta(days=2)  # Avança para segunda
-    elif data.weekday() == 6:  # Domingo
-        data += timedelta(days=1)  # Avança para segunda
-    return data
-
 def calcular_data_real(row):
+    data = row["DATA_VENCIMENTO"]
+
     if row["TIPO"] == "RECEITA":
-        if row["NATUREZA"] in ["PIX", "TED"]:
-            return ajustar_para_segunda(row["DATA_VENCIMENTO"])  # Ajusta para segunda-feira, se necessário
-        elif row["NATUREZA"] == "BOLETO":
-            return ajustar_para_segunda(proximo_dia_util(row["DATA_VENCIMENTO"]))  # Ajusta para segunda-feira, se necessário
-    if row["TIPO"] == "DESPESA":
-        return ajustar_para_segunda(row["DATA_VENCIMENTO"])  # Ajusta para segunda-feira, se necessário
-    return row["DATA_VENCIMENTO"]
+        if row["NATUREZA"] == "BOLETO":
+            data = data + timedelta(days=1)  # boleto cai no dia seguinte
+        # PIX / TED usam a própria data
+
+    # PARA RECEITA E DESPESA:
+    # garante que não fique em sábado, domingo ou feriado
+    return proximo_dia_util(data)
 
 def formatar_real(valor):
     return f"R$ {valor:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
@@ -79,6 +72,9 @@ df["DATA_VENCIMENTO"] = pd.to_datetime(df["DATA_VENCIMENTO"]).dt.date
 df["TIPO"] = df["TIPO"].str.upper().str.strip()
 df["NATUREZA"] = df["NATUREZA"].astype(str).str.upper().str.strip()
 
+# =========================
+# DATA REAL (REGRA FINAL)
+# =========================
 df["DATA_REAL"] = df.apply(calcular_data_real, axis=1)
 df["DATA_REAL"] = pd.to_datetime(df["DATA_REAL"])
 
@@ -102,7 +98,7 @@ quadro.columns = ["Receita", "Despesa"]
 quadro = quadro.sort_index().reset_index()
 
 # =========================
-# 🔥 LÓGICA CORRETA DO SALDO (ENCADAEADA)
+# SALDO ENCADEADO (IGUAL AO EXCEL)
 # =========================
 saldos = []
 saldo_atual = saldo_inicial
@@ -119,12 +115,15 @@ quadro["Saldo Final do Dia"] = saldos
 c1, c2, c3 = st.columns(3)
 c1.metric("Saldo Inicial (Hoje)", formatar_real(saldo_inicial))
 c2.metric("Saldo Final Projetado", formatar_real(quadro["Saldo Final do Dia"].iloc[-1]))
-c3.metric("Resultado do Período", formatar_real(quadro["Receita"].sum() - quadro["Despesa"].sum()))
+c3.metric(
+    "Resultado do Período",
+    formatar_real(quadro["Receita"].sum() - quadro["Despesa"].sum())
+)
 
 st.markdown("---")
 
 # =========================
-# TABELA HTML (COM BORDAS)
+# TABELA HTML
 # =========================
 html = """
 <style>
@@ -178,7 +177,7 @@ html += "</table>"
 components.html(html, height=650, scrolling=True)
 
 # =========================
-# GRÁFICO (SALDO PROJETADO)
+# GRÁFICO
 # =========================
 st.line_chart(
     quadro.set_index("DATA_REAL")["Saldo Final do Dia"]
