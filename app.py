@@ -9,7 +9,7 @@ from datetime import timedelta
 st.set_page_config(page_title="Fluxo de Caixa Diário", layout="wide")
 
 # =========================
-# TOPO: TÍTULO À ESQUERDA | LOGO À DIREITA (GRANDE)
+# TOPO
 # =========================
 col_title, col_logo = st.columns([3, 2])
 
@@ -17,12 +17,12 @@ with col_title:
     st.markdown("## 📊 Fluxo de Caixa Diário")
 
 with col_logo:
-    st.image("logo.png", width=120)
+    st.image("logo.png", width=340)
 
 cal = Brazil()
 
 # =========================
-# CONFIGURAÇÃO FIXA (AUTOMÁTICO)
+# CONFIGURAÇÃO FIXA
 # =========================
 URL_PLANILHA = "https://raw.githubusercontent.com/marielanatal/fluxo-de-caixa/main/fluxo.xlsx"
 
@@ -48,9 +48,9 @@ def formatar_real(valor):
 
 def estilo_saldo(valor):
     return (
-        "color: red; font-weight: bold; font-size: 16px;"
+        "color: red; font-weight: bold;"
         if valor < 0
-        else "color: green; font-weight: bold; font-size: 16px;"
+        else "color: green; font-weight: bold;"
     )
 
 # =========================
@@ -68,9 +68,7 @@ saldo_inicial = st.number_input(
 try:
     df = pd.read_excel(URL_PLANILHA)
 
-    # Padronizar colunas
     df.columns = df.columns.str.strip().str.upper()
-
     df = df.rename(columns={
         "DT. VENCIMENTO": "DATA_VENCIMENTO",
         "FORMA DE PAGAMENTO": "NATUREZA"
@@ -80,11 +78,9 @@ try:
     df["TIPO"] = df["TIPO"].str.upper().str.strip()
     df["NATUREZA"] = df["NATUREZA"].astype(str).str.upper().str.strip()
 
-    # Data real de impacto no caixa
     df["DATA_REAL"] = df.apply(calcular_data_real, axis=1)
     df["DATA_REAL"] = pd.to_datetime(df["DATA_REAL"]).dt.date
 
-    # Receitas e despesas
     receitas = (
         df[df["TIPO"] == "RECEITA"]
         .groupby("DATA_REAL")["VALOR"]
@@ -110,16 +106,12 @@ try:
     # CARDS
     # =========================
     col1, col2, col3 = st.columns(3)
-
     col1.metric("Saldo Inicial", formatar_real(saldo_inicial))
     col2.metric("Saldo Final Projetado", formatar_real(quadro["SALDO_FINAL_DIA"].iloc[-1]))
-    col3.metric(
-        "Resultado do Período",
-        formatar_real(quadro["RECEITA"].sum() - quadro["DESPESA"].sum())
-    )
+    col3.metric("Resultado do Período", formatar_real(quadro["RECEITA"].sum() - quadro["DESPESA"].sum()))
 
     # =========================
-    # TABELA
+    # TABELA COM CABEÇALHO AZUL
     # =========================
     quadro_display = quadro.copy()
     quadro_display["DATA_REAL"] = pd.to_datetime(quadro_display["DATA_REAL"]).dt.strftime("%d/%m/%Y")
@@ -139,6 +131,24 @@ try:
             "Saldo Final do Dia": formatar_real
         })
         .applymap(estilo_saldo, subset=["Saldo Final do Dia"])
+        .set_table_styles([
+            {
+                "selector": "th",
+                "props": [
+                    ("background-color", "#1f4fd8"),
+                    ("color", "white"),
+                    ("font-weight", "bold"),
+                    ("font-size", "14px"),
+                    ("text-align", "center")
+                ]
+            },
+            {
+                "selector": "td",
+                "props": [
+                    ("font-size", "13px")
+                ]
+            }
+        ])
     )
 
     st.subheader("📅 Quadro de Fluxo de Caixa Diário")
