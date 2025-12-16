@@ -2,6 +2,7 @@ import streamlit as st
 import pandas as pd
 from workalendar.america.brazil import Brazil
 from datetime import timedelta
+import streamlit.components.v1 as components
 
 # =========================
 # CONFIGURAÇÃO
@@ -9,65 +10,25 @@ from datetime import timedelta
 st.set_page_config(page_title="Fluxo de Caixa Diário", layout="wide")
 
 # =========================
-# CSS GLOBAL (AJUSTE FINO DE LAYOUT)
-# =========================
-st.markdown(
-    """
-    <style>
-    .block-container {
-        padding-left: 0.8rem;
-        padding-right: 0.8rem;
-        max-width: 100%;
-    }
-
-    .tabela-full table {
-        width: 100% !important;
-        margin: 0 auto;
-        border-collapse: collapse;
-    }
-
-    .tabela-full th {
-        background-color: #1f4fd8;
-        color: white;
-        font-weight: bold;
-        font-size: 15px;
-        text-align: center;
-        padding: 10px;
-    }
-
-    .tabela-full td {
-        font-size: 15px;
-        padding: 10px;
-        text-align: center;
-    }
-    </style>
-    """,
-    unsafe_allow_html=True
-)
-
-# =========================
 # TOPO
 # =========================
 col_title, col_logo = st.columns([3, 2])
-
 with col_title:
     st.markdown("## 📊 Quadro de Fluxo de Caixa Diário")
-
 with col_logo:
     st.image("logo.png", width=340)
-
-cal = Brazil()
 
 # =========================
 # CONFIGURAÇÃO FIXA
 # =========================
 URL_PLANILHA = "https://raw.githubusercontent.com/marielanatal/fluxo-de-caixa/main/fluxo.xlsx"
+cal = Brazil()
 
 # =========================
 # FUNÇÕES
 # =========================
 def proximo_dia_util(data):
-    data = data + timedelta(days=1)
+    data += timedelta(days=1)
     while not cal.is_working_day(data):
         data += timedelta(days=1)
     return data
@@ -76,109 +37,109 @@ def calcular_data_real(row):
     if row["TIPO"] == "RECEITA":
         if row["NATUREZA"] in ["PIX", "TED"]:
             return row["DATA_VENCIMENTO"]
-        elif row["NATUREZA"] == "BOLETO":
+        if row["NATUREZA"] == "BOLETO":
             return proximo_dia_util(row["DATA_VENCIMENTO"])
     return row["DATA_VENCIMENTO"]
 
 def formatar_real(valor):
     return f"R$ {valor:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
 
-def estilo_saldo(valor):
-    return "color: red; font-weight: bold;" if valor < 0 else "color: green; font-weight: bold;"
-
 # =========================
 # INPUT
 # =========================
-saldo_inicial = st.number_input(
-    "Saldo atual em conta",
-    value=0.0,
-    format="%.2f"
-)
+saldo_inicial = st.number_input("Saldo atual em conta", value=0.0, format="%.2f")
 
 # =========================
 # PROCESSAMENTO
 # =========================
-try:
-    df = pd.read_excel(URL_PLANILHA)
+df = pd.read_excel(URL_PLANILHA)
 
-    df.columns = df.columns.str.strip().str.upper()
-    df = df.rename(columns={
-        "DT. VENCIMENTO": "DATA_VENCIMENTO",
-        "FORMA DE PAGAMENTO": "NATUREZA"
-    })
+df.columns = df.columns.str.strip().str.upper()
+df = df.rename(columns={
+    "DT. VENCIMENTO": "DATA_VENCIMENTO",
+    "FORMA DE PAGAMENTO": "NATUREZA"
+})
 
-    df["DATA_VENCIMENTO"] = pd.to_datetime(df["DATA_VENCIMENTO"]).dt.date
-    df["TIPO"] = df["TIPO"].str.upper().str.strip()
-    df["NATUREZA"] = df["NATUREZA"].astype(str).str.upper().str.strip()
+df["DATA_VENCIMENTO"] = pd.to_datetime(df["DATA_VENCIMENTO"]).dt.date
+df["TIPO"] = df["TIPO"].str.upper().str.strip()
+df["NATUREZA"] = df["NATUREZA"].astype(str).str.upper().str.strip()
 
-    df["DATA_REAL"] = df.apply(calcular_data_real, axis=1)
-    df["DATA_REAL"] = pd.to_datetime(df["DATA_REAL"]).dt.date
+df["DATA_REAL"] = df.apply(calcular_data_real, axis=1)
+df["DATA_REAL"] = pd.to_datetime(df["DATA_REAL"]).dt.date
 
-    receitas = (
-        df[df["TIPO"] == "RECEITA"]
-        .groupby("DATA_REAL")["VALOR"]
-        .sum()
-        .reset_index()
-        .rename(columns={"VALOR": "RECEITA"})
-    )
+receitas = df[df["TIPO"] == "RECEITA"].groupby("DATA_REAL")["VALOR"].sum()
+despesas = df[df["TIPO"] == "DESPESA"].groupby("DATA_REAL")["VALOR"].sum()
 
-    despesas = (
-        df[df["TIPO"] == "DESPESA"]
-        .groupby("DATA_REAL")["VALOR"]
-        .sum()
-        .reset_index()
-        .rename(columns={"VALOR": "DESPESA"})
-    )
+quadro = pd.concat([receitas, despesas], axis=1).fillna(0)
+quadro.columns = ["Receita", "Despesa"]
+quadro["Saldo Final do Dia"] = saldo_inicial + (quadro["Receita"] - quadro["Despesa"]).cumsum()
+quadro = quadro.reset_index()
+quadro["Data"] = pd.to_datetime(quadro["DATA_REAL"]).dt.strftime("%d/%m/%Y")
 
-    quadro = pd.merge(receitas, despesas, on="DATA_REAL", how="outer").fillna(0)
-    quadro = quadro.sort_values("DATA_REAL")
+# =========================
+# RESUMOS
+# =========================
+c1, c2, c3 = st.columns(3)
+c1.metric("Saldo Inicial", formatar_real(saldo_inicial))
+c2.metric("Saldo Final Projetado", formatar_real(quadro["Saldo Final do Dia"].iloc[-1]))
+c3.metric("Resultado do Período", formatar_real(quadro["Receita"].sum() - quadro["Despesa"].sum()))
 
-    quadro["SALDO_FINAL_DIA"] = saldo_inicial + (quadro["RECEITA"] - quadro["DESPESA"]).cumsum()
+# =========================
+# HTML DA TABELA (FULL WIDTH REAL)
+# =========================
+html = f"""
+<style>
+table {{
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 16px;
+}}
+th {{
+    background-color: #1f4fd8;
+    color: white;
+    padding: 12px;
+    text-align: center;
+}}
+td {{
+    padding: 10px;
+    text-align: center;
+}}
+.neg {{
+    color: red;
+    font-weight: bold;
+}}
+.pos {{
+    color: green;
+    font-weight: bold;
+}}
+</style>
 
-    # =========================
-    # RESUMOS
-    # =========================
-    col1, col2, col3 = st.columns(3)
-    col1.metric("Saldo Inicial", formatar_real(saldo_inicial))
-    col2.metric("Saldo Final Projetado", formatar_real(quadro["SALDO_FINAL_DIA"].iloc[-1]))
-    col3.metric("Resultado do Período", formatar_real(quadro["RECEITA"].sum() - quadro["DESPESA"].sum()))
+<table>
+<tr>
+    <th>Data</th>
+    <th>Receita</th>
+    <th>Despesa</th>
+    <th>Saldo Final do Dia</th>
+</tr>
+"""
 
-    st.markdown("---")
+for _, row in quadro.iterrows():
+    cls = "neg" if row["Saldo Final do Dia"] < 0 else "pos"
+    html += f"""
+    <tr>
+        <td>{row['Data']}</td>
+        <td>{formatar_real(row['Receita'])}</td>
+        <td>{formatar_real(row['Despesa'])}</td>
+        <td class="{cls}">{formatar_real(row['Saldo Final do Dia'])}</td>
+    </tr>
+    """
 
-    # =========================
-    # TABELA
-    # =========================
-    quadro_display = quadro.copy()
-    quadro_display["DATA_REAL"] = pd.to_datetime(quadro_display["DATA_REAL"]).dt.strftime("%d/%m/%Y")
+html += "</table>"
 
-    styled = (
-        quadro_display[["DATA_REAL", "RECEITA", "DESPESA", "SALDO_FINAL_DIA"]]
-        .rename(columns={
-            "DATA_REAL": "Data",
-            "RECEITA": "Receita",
-            "DESPESA": "Despesa",
-            "SALDO_FINAL_DIA": "Saldo Final do Dia"
-        })
-        .style
-        .format({
-            "Receita": formatar_real,
-            "Despesa": formatar_real,
-            "Saldo Final do Dia": formatar_real
-        })
-        .applymap(estilo_saldo, subset=["Saldo Final do Dia"])
-    )
+components.html(html, height=650, scrolling=True)
 
-    st.markdown(
-        f"<div class='tabela-full'>{styled.to_html()}</div>",
-        unsafe_allow_html=True
-    )
-
-    # =========================
-    # GRÁFICO
-    # =========================
-    st.line_chart(quadro.set_index("DATA_REAL")["SALDO_FINAL_DIA"])
-
-except Exception as e:
-    st.error("Erro ao carregar a planilha automática.")
-    st.exception(e)
+# =========================
+# GRÁFICO
+# =========================
+st.line_chart(quadro.set_index("Data")["Saldo Final do Dia"])
 
