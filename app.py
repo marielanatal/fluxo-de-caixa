@@ -67,11 +67,11 @@ if url_planilha:
         df["TIPO"] = df["TIPO"].str.upper().str.strip()
         df["NATUREZA"] = df["NATUREZA"].astype(str).str.upper().str.strip()
 
-        # Data real
+        # Data real de impacto no caixa
         df["DATA_REAL"] = df.apply(calcular_data_real, axis=1)
         df["DATA_REAL"] = pd.to_datetime(df["DATA_REAL"]).dt.date
 
-        # Receitas e despesas
+        # Receitas e despesas por dia
         receitas = (
             df[df["TIPO"] == "RECEITA"]
             .groupby("DATA_REAL")["VALOR"]
@@ -92,8 +92,8 @@ if url_planilha:
         quadro = pd.merge(receitas, despesas, on="DATA_REAL", how="outer").fillna(0)
         quadro = quadro.sort_values("DATA_REAL")
 
-        quadro["RESULTADO"] = quadro["RECEITA"] - quadro["DESPESA"]
-        quadro["SALDO"] = saldo_inicial + quadro["RESULTADO"].cumsum()
+        # Saldo acumulado (sem mostrar resultado do dia)
+        quadro["SALDO_FINAL_DIA"] = saldo_inicial + (quadro["RECEITA"] - quadro["DESPESA"]).cumsum()
 
         # =========================
         # CARDS
@@ -101,34 +101,36 @@ if url_planilha:
         col1, col2, col3 = st.columns(3)
 
         col1.metric("Saldo Inicial", formatar_real(saldo_inicial))
-        col2.metric("Saldo Final Projetado", formatar_real(quadro["SALDO"].iloc[-1]))
-        col3.metric("Resultado no Período", formatar_real(quadro["RESULTADO"].sum()))
+        col2.metric("Saldo Final Projetado", formatar_real(quadro["SALDO_FINAL_DIA"].iloc[-1]))
+        col3.metric(
+            "Total do Período",
+            formatar_real(quadro["RECEITA"].sum() - quadro["DESPESA"].sum())
+        )
 
         # =========================
-        # TABELA COM ESTILO CORRETO
+        # TABELA FINAL (LIMPA)
         # =========================
         quadro_display = quadro.copy()
+
         quadro_display["DATA_REAL"] = pd.to_datetime(
             quadro_display["DATA_REAL"]
         ).dt.strftime("%d/%m/%Y")
 
         styled = (
-            quadro_display
+            quadro_display[["DATA_REAL", "RECEITA", "DESPESA", "SALDO_FINAL_DIA"]]
             .rename(columns={
                 "DATA_REAL": "Data",
                 "RECEITA": "Receita",
                 "DESPESA": "Despesa",
-                "RESULTADO": "Resultado do Dia",
-                "SALDO": "Saldo"
+                "SALDO_FINAL_DIA": "Saldo Final do Dia"
             })
             .style
             .format({
                 "Receita": formatar_real,
                 "Despesa": formatar_real,
-                "Resultado do Dia": formatar_real,
-                "Saldo": formatar_real
+                "Saldo Final do Dia": formatar_real
             })
-            .applymap(cor_negativo, subset=["Resultado do Dia", "Saldo"])
+            .applymap(cor_negativo, subset=["Saldo Final do Dia"])
         )
 
         st.subheader("📅 Quadro de Fluxo de Caixa Diário")
@@ -137,7 +139,7 @@ if url_planilha:
         # =========================
         # GRÁFICO
         # =========================
-        st.line_chart(quadro.set_index("DATA_REAL")["SALDO"])
+        st.line_chart(quadro.set_index("DATA_REAL")["SALDO_FINAL_DIA"])
 
     except Exception as e:
         st.error("Erro ao processar a planilha.")
