@@ -2,7 +2,6 @@ import streamlit as st
 import pandas as pd
 from workalendar.america.brazil import Brazil
 from datetime import timedelta
-from PIL import Image
 
 # =========================
 # CONFIGURAÇÃO
@@ -12,14 +11,10 @@ st.set_page_config(page_title="Fluxo de Caixa Diário", layout="wide")
 # =========================
 # LOGO + TÍTULO
 # =========================
-col_logo, col_title = st.columns([1, 4])
+col_logo, col_title = st.columns([1, 5])
 
 with col_logo:
-    try:
-        logo = Image.open("logo.png")
-        st.image(logo, width=120)
-    except:
-        pass  # se não achar o logo, não quebra o app
+    st.image("logo.png", width=130)
 
 with col_title:
     st.markdown("## 📊 Fluxo de Caixa Diário")
@@ -157,4 +152,3 @@ if url_planilha:
     except Exception as e:
         st.error("Erro ao processar a planilha.")
         st.exception(e)
-
