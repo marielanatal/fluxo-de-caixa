@@ -9,7 +9,7 @@ from datetime import timedelta
 st.set_page_config(page_title="Fluxo de Caixa Diário", layout="wide")
 
 # =========================
-# TOPO: TÍTULO À ESQUERDA | LOGO À DIREITA (MAIOR)
+# TOPO: TÍTULO À ESQUERDA | LOGO À DIREITA (GRANDE)
 # =========================
 col_title, col_logo = st.columns([3, 2])
 
@@ -17,9 +17,14 @@ with col_title:
     st.markdown("## 📊 Fluxo de Caixa Diário")
 
 with col_logo:
-    st.image("logo.png", width=340)  # <<< AQUI: logo BEM maior
+    st.image("logo.png", width=340)
 
 cal = Brazil()
+
+# =========================
+# CONFIGURAÇÃO FIXA (AUTOMÁTICO)
+# =========================
+URL_PLANILHA = "https://raw.githubusercontent.com/marielanatal/fluxo-de-caixa/main/fluxo.xlsx"
 
 # =========================
 # FUNÇÕES
@@ -42,16 +47,15 @@ def formatar_real(valor):
     return f"R$ {valor:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
 
 def estilo_saldo(valor):
-    return "color: red; font-weight: bold; font-size: 16px;" if valor < 0 else "color: green; font-weight: bold; font-size: 16px;"
+    return (
+        "color: red; font-weight: bold; font-size: 16px;"
+        if valor < 0
+        else "color: green; font-weight: bold; font-size: 16px;"
+    )
 
 # =========================
-# INPUTS
+# INPUT
 # =========================
-url_planilha = st.text_input(
-    "URL RAW do Excel no GitHub",
-    placeholder="https://raw.githubusercontent.com/usuario/repositorio/main/fluxo.xlsx"
-)
-
 saldo_inicial = st.number_input(
     "Saldo atual em conta",
     value=0.0,
@@ -61,86 +65,91 @@ saldo_inicial = st.number_input(
 # =========================
 # PROCESSAMENTO
 # =========================
-if url_planilha:
-    try:
-        df = pd.read_excel(url_planilha)
+try:
+    df = pd.read_excel(URL_PLANILHA)
 
-        # Padronizar colunas
-        df.columns = df.columns.str.strip().str.upper()
-        df = df.rename(columns={
-            "DT. VENCIMENTO": "DATA_VENCIMENTO",
-            "FORMA DE PAGAMENTO": "NATUREZA"
+    # Padronizar colunas
+    df.columns = df.columns.str.strip().str.upper()
+
+    df = df.rename(columns={
+        "DT. VENCIMENTO": "DATA_VENCIMENTO",
+        "FORMA DE PAGAMENTO": "NATUREZA"
+    })
+
+    df["DATA_VENCIMENTO"] = pd.to_datetime(df["DATA_VENCIMENTO"]).dt.date
+    df["TIPO"] = df["TIPO"].str.upper().str.strip()
+    df["NATUREZA"] = df["NATUREZA"].astype(str).str.upper().str.strip()
+
+    # Data real de impacto no caixa
+    df["DATA_REAL"] = df.apply(calcular_data_real, axis=1)
+    df["DATA_REAL"] = pd.to_datetime(df["DATA_REAL"]).dt.date
+
+    # Receitas e despesas
+    receitas = (
+        df[df["TIPO"] == "RECEITA"]
+        .groupby("DATA_REAL")["VALOR"]
+        .sum()
+        .reset_index()
+        .rename(columns={"VALOR": "RECEITA"})
+    )
+
+    despesas = (
+        df[df["TIPO"] == "DESPESA"]
+        .groupby("DATA_REAL")["VALOR"]
+        .sum()
+        .reset_index()
+        .rename(columns={"VALOR": "DESPESA"})
+    )
+
+    quadro = pd.merge(receitas, despesas, on="DATA_REAL", how="outer").fillna(0)
+    quadro = quadro.sort_values("DATA_REAL")
+
+    quadro["SALDO_FINAL_DIA"] = saldo_inicial + (quadro["RECEITA"] - quadro["DESPESA"]).cumsum()
+
+    # =========================
+    # CARDS
+    # =========================
+    col1, col2, col3 = st.columns(3)
+
+    col1.metric("Saldo Inicial", formatar_real(saldo_inicial))
+    col2.metric("Saldo Final Projetado", formatar_real(quadro["SALDO_FINAL_DIA"].iloc[-1]))
+    col3.metric(
+        "Resultado do Período",
+        formatar_real(quadro["RECEITA"].sum() - quadro["DESPESA"].sum())
+    )
+
+    # =========================
+    # TABELA
+    # =========================
+    quadro_display = quadro.copy()
+    quadro_display["DATA_REAL"] = pd.to_datetime(quadro_display["DATA_REAL"]).dt.strftime("%d/%m/%Y")
+
+    styled = (
+        quadro_display[["DATA_REAL", "RECEITA", "DESPESA", "SALDO_FINAL_DIA"]]
+        .rename(columns={
+            "DATA_REAL": "Data",
+            "RECEITA": "Receita",
+            "DESPESA": "Despesa",
+            "SALDO_FINAL_DIA": "Saldo Final do Dia"
         })
+        .style
+        .format({
+            "Receita": formatar_real,
+            "Despesa": formatar_real,
+            "Saldo Final do Dia": formatar_real
+        })
+        .applymap(estilo_saldo, subset=["Saldo Final do Dia"])
+    )
 
-        df["DATA_VENCIMENTO"] = pd.to_datetime(df["DATA_VENCIMENTO"]).dt.date
-        df["TIPO"] = df["TIPO"].str.upper().str.strip()
-        df["NATUREZA"] = df["NATUREZA"].astype(str).str.upper().str.strip()
+    st.subheader("📅 Quadro de Fluxo de Caixa Diário")
+    st.dataframe(styled, use_container_width=True)
 
-        # Data real
-        df["DATA_REAL"] = df.apply(calcular_data_real, axis=1)
-        df["DATA_REAL"] = pd.to_datetime(df["DATA_REAL"]).dt.date
+    # =========================
+    # GRÁFICO
+    # =========================
+    st.line_chart(quadro.set_index("DATA_REAL")["SALDO_FINAL_DIA"])
 
-        # Receitas e despesas
-        receitas = (
-            df[df["TIPO"] == "RECEITA"]
-            .groupby("DATA_REAL")["VALOR"]
-            .sum()
-            .reset_index()
-            .rename(columns={"VALOR": "RECEITA"})
-        )
+except Exception as e:
+    st.error("Erro ao carregar a planilha automática.")
+    st.exception(e)
 
-        despesas = (
-            df[df["TIPO"] == "DESPESA"]
-            .groupby("DATA_REAL")["VALOR"]
-            .sum()
-            .reset_index()
-            .rename(columns={"VALOR": "DESPESA"})
-        )
-
-        quadro = pd.merge(receitas, despesas, on="DATA_REAL", how="outer").fillna(0)
-        quadro = quadro.sort_values("DATA_REAL")
-
-        quadro["SALDO_FINAL_DIA"] = saldo_inicial + (quadro["RECEITA"] - quadro["DESPESA"]).cumsum()
-
-        # =========================
-        # CARDS
-        # =========================
-        col1, col2, col3 = st.columns(3)
-        col1.metric("Saldo Inicial", formatar_real(saldo_inicial))
-        col2.metric("Saldo Final Projetado", formatar_real(quadro["SALDO_FINAL_DIA"].iloc[-1]))
-        col3.metric("Resultado do Período", formatar_real(quadro["RECEITA"].sum() - quadro["DESPESA"].sum()))
-
-        # =========================
-        # TABELA
-        # =========================
-        quadro_display = quadro.copy()
-        quadro_display["DATA_REAL"] = pd.to_datetime(quadro_display["DATA_REAL"]).dt.strftime("%d/%m/%Y")
-
-        styled = (
-            quadro_display[["DATA_REAL", "RECEITA", "DESPESA", "SALDO_FINAL_DIA"]]
-            .rename(columns={
-                "DATA_REAL": "Data",
-                "RECEITA": "Receita",
-                "DESPESA": "Despesa",
-                "SALDO_FINAL_DIA": "Saldo Final do Dia"
-            })
-            .style
-            .format({
-                "Receita": formatar_real,
-                "Despesa": formatar_real,
-                "Saldo Final do Dia": formatar_real
-            })
-            .applymap(estilo_saldo, subset=["Saldo Final do Dia"])
-        )
-
-        st.subheader("📅 Quadro de Fluxo de Caixa Diário")
-        st.dataframe(styled, use_container_width=True)
-
-        # =========================
-        # GRÁFICO
-        # =========================
-        st.line_chart(quadro.set_index("DATA_REAL")["SALDO_FINAL_DIA"])
-
-    except Exception as e:
-        st.error("Erro ao processar a planilha.")
-        st.exception(e)
