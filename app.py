@@ -31,6 +31,15 @@ def calcular_data_real(row):
 def formatar_real(valor):
     return f"R$ {valor:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
 
+def estilo_negativo(val):
+    try:
+        val_num = float(val)
+        if val_num < 0:
+            return "color: red; font-weight: bold;"
+    except:
+        pass
+    return ""
+
 # =========================
 # INPUTS
 # =========================
@@ -65,11 +74,11 @@ if url_planilha:
         df["TIPO"] = df["TIPO"].str.upper().str.strip()
         df["NATUREZA"] = df["NATUREZA"].astype(str).str.upper().str.strip()
 
-        # Data real de impacto no caixa
+        # Data real
         df["DATA_REAL"] = df.apply(calcular_data_real, axis=1)
         df["DATA_REAL"] = pd.to_datetime(df["DATA_REAL"]).dt.date
 
-        # Separar receitas e despesas
+        # Receitas e despesas por dia
         receitas = (
             df[df["TIPO"] == "RECEITA"]
             .groupby("DATA_REAL")["VALOR"]
@@ -86,25 +95,12 @@ if url_planilha:
             .rename(columns={"VALOR": "DESPESA"})
         )
 
-        # Criar quadro base com todas as datas
+        # Quadro base
         quadro = pd.merge(receitas, despesas, on="DATA_REAL", how="outer").fillna(0)
         quadro = quadro.sort_values("DATA_REAL")
 
-        # Resultado e saldo
         quadro["RESULTADO"] = quadro["RECEITA"] - quadro["DESPESA"]
         quadro["SALDO"] = saldo_inicial + quadro["RESULTADO"].cumsum()
-
-        # =========================
-        # EXIBIÇÃO FORMATADA
-        # =========================
-        quadro_exibicao = quadro.copy()
-
-        quadro_exibicao["DATA_REAL"] = pd.to_datetime(
-            quadro_exibicao["DATA_REAL"]
-        ).dt.strftime("%d/%m/%Y")
-
-        for col in ["RECEITA", "DESPESA", "RESULTADO", "SALDO"]:
-            quadro_exibicao[col] = quadro_exibicao[col].apply(formatar_real)
 
         # =========================
         # CARDS
@@ -115,22 +111,38 @@ if url_planilha:
         col2.metric("Saldo Final Projetado", formatar_real(quadro["SALDO"].iloc[-1]))
         col3.metric("Resultado no Período", formatar_real(quadro["RESULTADO"].sum()))
 
-        st.subheader("📅 Quadro de Fluxo de Caixa Diário")
+        # =========================
+        # TABELA FORMATADA
+        # =========================
+        quadro_exibicao = quadro.copy()
 
-        st.dataframe(
-            quadro_exibicao.rename(columns={
+        quadro_exibicao["DATA_REAL"] = pd.to_datetime(
+            quadro_exibicao["DATA_REAL"]
+        ).dt.strftime("%d/%m/%Y")
+
+        for col in ["RECEITA", "DESPESA", "RESULTADO", "SALDO"]:
+            quadro_exibicao[col] = quadro_exibicao[col].apply(formatar_real)
+
+        styled = (
+            quadro_exibicao
+            .rename(columns={
                 "DATA_REAL": "Data",
                 "RECEITA": "Receita",
                 "DESPESA": "Despesa",
                 "RESULTADO": "Resultado do Dia",
                 "SALDO": "Saldo"
-            }),
-            use_container_width=True
+            })
+            .style
+            .applymap(estilo_negativo, subset=["Resultado do Dia", "Saldo"])
         )
 
-        st.line_chart(
-            quadro.set_index("DATA_REAL")["SALDO"]
-        )
+        st.subheader("📅 Quadro de Fluxo de Caixa Diário")
+        st.dataframe(styled, use_container_width=True)
+
+        # =========================
+        # GRÁFICO
+        # =========================
+        st.line_chart(quadro.set_index("DATA_REAL")["SALDO"])
 
     except Exception as e:
         st.error("Erro ao processar a planilha.")
