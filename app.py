@@ -16,7 +16,7 @@ col_title, col_logo = st.columns([3, 2])
 with col_title:
     st.markdown("## 📊 Quadro de Fluxo de Caixa Diário")
 with col_logo:
-    st.image("logo.png", width=220)
+    st.image("logo.png", width=340)
 
 # =========================
 # CONFIGURAÇÃO FIXA
@@ -47,7 +47,11 @@ def formatar_real(valor):
 # =========================
 # INPUT
 # =========================
-saldo_inicial = st.number_input("Saldo atual em conta", value=0.0, format="%.2f")
+saldo_inicial = st.number_input(
+    "Saldo atual em conta",
+    value=0.0,
+    format="%.2f"
+)
 
 # =========================
 # PROCESSAMENTO
@@ -65,7 +69,7 @@ df["TIPO"] = df["TIPO"].str.upper().str.strip()
 df["NATUREZA"] = df["NATUREZA"].astype(str).str.upper().str.strip()
 
 df["DATA_REAL"] = df.apply(calcular_data_real, axis=1)
-df["DATA_REAL"] = pd.to_datetime(df["DATA_REAL"]).dt.date
+df["DATA_REAL"] = pd.to_datetime(df["DATA_REAL"])
 
 receitas = df[df["TIPO"] == "RECEITA"].groupby("DATA_REAL")["VALOR"].sum()
 despesas = df[df["TIPO"] == "DESPESA"].groupby("DATA_REAL")["VALOR"].sum()
@@ -74,7 +78,6 @@ quadro = pd.concat([receitas, despesas], axis=1).fillna(0)
 quadro.columns = ["Receita", "Despesa"]
 quadro["Saldo Final do Dia"] = saldo_inicial + (quadro["Receita"] - quadro["Despesa"]).cumsum()
 quadro = quadro.reset_index()
-quadro["Data"] = pd.to_datetime(quadro["DATA_REAL"]).dt.strftime("%d/%m/%Y")
 
 # =========================
 # RESUMOS
@@ -84,34 +87,36 @@ c1.metric("Saldo Inicial", formatar_real(saldo_inicial))
 c2.metric("Saldo Final Projetado", formatar_real(quadro["Saldo Final do Dia"].iloc[-1]))
 c3.metric("Resultado do Período", formatar_real(quadro["Receita"].sum() - quadro["Despesa"].sum()))
 
+st.markdown("---")
+
 # =========================
-# HTML DA TABELA (FULL WIDTH REAL)
+# TABELA HTML (COM BORDAS)
 # =========================
-html = f"""
+html = """
 <style>
-table {{
+table {
     width: 100%;
     border-collapse: collapse;
     font-size: 16px;
-}}
-th {{
-    background-color: #1f4fd8;
-    color: white;
-    padding: 12px;
-    text-align: center;
-}}
-td {{
+}
+th, td {
+    border: 1px solid #d0d7de;
     padding: 10px;
     text-align: center;
-}}
-.neg {{
+}
+th {
+    background-color: #1f4fd8;
+    color: white;
+    font-weight: bold;
+}
+.neg {
     color: red;
     font-weight: bold;
-}}
-.pos {{
+}
+.pos {
     color: green;
     font-weight: bold;
-}}
+}
 </style>
 
 <table>
@@ -127,7 +132,7 @@ for _, row in quadro.iterrows():
     cls = "neg" if row["Saldo Final do Dia"] < 0 else "pos"
     html += f"""
     <tr>
-        <td>{row['Data']}</td>
+        <td>{row['DATA_REAL'].strftime('%d/%m/%Y')}</td>
         <td>{formatar_real(row['Receita'])}</td>
         <td>{formatar_real(row['Despesa'])}</td>
         <td class="{cls}">{formatar_real(row['Saldo Final do Dia'])}</td>
@@ -139,7 +144,9 @@ html += "</table>"
 components.html(html, height=650, scrolling=True)
 
 # =========================
-# GRÁFICO
+# GRÁFICO (FORMATO ORIGINAL CORRETO)
 # =========================
-st.line_chart(quadro.set_index("Data")["Saldo Final do Dia"])
+st.line_chart(
+    quadro.set_index("DATA_REAL")["Saldo Final do Dia"]
+)
 
