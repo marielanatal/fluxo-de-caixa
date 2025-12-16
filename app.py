@@ -17,7 +17,7 @@ with col_title:
     st.markdown("## 📊 Fluxo de Caixa Diário")
 
 with col_logo:
-    st.image("logo.png", width=220)  # <<< AQUI define o tamanho do logo
+    st.image("logo.png", width=320)  # <<< AQUI define o tamanho do logo
 
 cal = Brazil()
 
