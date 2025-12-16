@@ -2,12 +2,27 @@ import streamlit as st
 import pandas as pd
 from workalendar.america.brazil import Brazil
 from datetime import timedelta
+from PIL import Image
 
 # =========================
 # CONFIGURAÇÃO
 # =========================
 st.set_page_config(page_title="Fluxo de Caixa Diário", layout="wide")
-st.title("📊 Fluxo de Caixa Diário")
+
+# =========================
+# LOGO + TÍTULO
+# =========================
+col_logo, col_title = st.columns([1, 4])
+
+with col_logo:
+    try:
+        logo = Image.open("logo.png")
+        st.image(logo, width=120)
+    except:
+        pass  # se não achar o logo, não quebra o app
+
+with col_title:
+    st.markdown("## 📊 Fluxo de Caixa Diário")
 
 cal = Brazil()
 
@@ -38,7 +53,7 @@ def estilo_saldo(valor):
         return "color: green; font-weight: bold; font-size: 16px;"
 
 # =========================
-# INPUTS (ORDEM NOVA)
+# INPUTS
 # =========================
 url_planilha = st.text_input(
     "URL RAW do Excel no GitHub",
@@ -91,14 +106,13 @@ if url_planilha:
             .rename(columns={"VALOR": "DESPESA"})
         )
 
-        # Quadro base
         quadro = pd.merge(receitas, despesas, on="DATA_REAL", how="outer").fillna(0)
         quadro = quadro.sort_values("DATA_REAL")
 
         quadro["SALDO_FINAL_DIA"] = saldo_inicial + (quadro["RECEITA"] - quadro["DESPESA"]).cumsum()
 
         # =========================
-        # CARDS (SALDO EM FOCO)
+        # CARDS
         # =========================
         col1, col2, col3 = st.columns(3)
 
@@ -110,13 +124,10 @@ if url_planilha:
         )
 
         # =========================
-        # TABELA FINAL
+        # TABELA
         # =========================
         quadro_display = quadro.copy()
-
-        quadro_display["DATA_REAL"] = pd.to_datetime(
-            quadro_display["DATA_REAL"]
-        ).dt.strftime("%d/%m/%Y")
+        quadro_display["DATA_REAL"] = pd.to_datetime(quadro_display["DATA_REAL"]).dt.strftime("%d/%m/%Y")
 
         styled = (
             quadro_display[["DATA_REAL", "RECEITA", "DESPESA", "SALDO_FINAL_DIA"]]
