@@ -32,6 +32,9 @@ def calcular_data_real(row):
             return proximo_dia_util(row["DATA_VENCIMENTO"])
     return row["DATA_VENCIMENTO"]
 
+def formatar_real(valor):
+    return f"R$ {valor:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
+
 # =========================
 # INPUTS
 # =========================
@@ -52,9 +55,10 @@ url_planilha = st.text_input(
 if url_planilha:
 
     try:
+        # Ler planilha
         df = pd.read_excel(url_planilha)
 
-        # Padronizar colunas
+        # Padronizar nomes das colunas
         df.columns = (
             df.columns
             .str.strip()
@@ -67,15 +71,16 @@ if url_planilha:
             "FORMA DE PAGAMENTO": "NATUREZA"
         })
 
-        # Converter data
-        df["DATA_VENCIMENTO"] = pd.to_datetime(df["DATA_VENCIMENTO"])
+        # Converter datas (sem hora)
+        df["DATA_VENCIMENTO"] = pd.to_datetime(df["DATA_VENCIMENTO"]).dt.date
 
         # Padronizar textos
-        df["TIPO"] = df["TIPO"].str.upper().str.strip()
-        df["NATUREZA"] = df["NATUREZA"].str.upper().str.strip()
+        df["TIPO"] = df["TIPO"].astype(str).str.upper().str.strip()
+        df["NATUREZA"] = df["NATUREZA"].astype(str).str.upper().str.strip()
 
-        # Calcular data real de entrada
+        # Calcular data real de entrada/saída
         df["DATA_REAL"] = df.apply(calcular_data_real, axis=1)
+        df["DATA_REAL"] = pd.to_datetime(df["DATA_REAL"]).dt.date
 
         # Criar valor de fluxo (+ receita / - despesa)
         df["VALOR_FLUXO"] = df.apply(
@@ -94,29 +99,30 @@ if url_planilha:
         fluxo["SALDO_PROJETADO"] = saldo_inicial + fluxo["VALOR_FLUXO"].cumsum()
 
         # =========================
-        # VISUAL
+        # VISUAL - CARDS
         # =========================
         col1, col2, col3 = st.columns(3)
 
-        col1.metric(
-            "Saldo Inicial",
-            f"R$ {saldo_inicial:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
-        )
+        col1.metric("Saldo Inicial", formatar_real(saldo_inicial))
+        col2.metric("Saldo Final Projetado", formatar_real(fluxo.iloc[-1]["SALDO_PROJETADO"]))
+        col3.metric("Variação no Período", formatar_real(fluxo["VALOR_FLUXO"].sum()))
 
-        col2.metric(
-            "Saldo Final Projetado",
-            f"R$ {fluxo.iloc[-1]['SALDO_PROJETADO']:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
-        )
+        # =========================
+        # TABELA FORMATADA
+        # =========================
+        fluxo_exibicao = fluxo.copy()
 
-        col3.metric(
-            "Variação no Período",
-            f"R$ {fluxo['VALOR_FLUXO'].sum():,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
-        )
+        fluxo_exibicao["DATA_REAL"] = pd.to_datetime(
+            fluxo_exibicao["DATA_REAL"]
+        ).dt.strftime("%d/%m/%Y")
+
+        fluxo_exibicao["VALOR_FLUXO"] = fluxo_exibicao["VALOR_FLUXO"].apply(formatar_real)
+        fluxo_exibicao["SALDO_PROJETADO"] = fluxo_exibicao["SALDO_PROJETADO"].apply(formatar_real)
 
         st.subheader("📅 Evolução Diária do Saldo")
 
         st.dataframe(
-            fluxo.rename(columns={
+            fluxo_exibicao.rename(columns={
                 "DATA_REAL": "Data",
                 "VALOR_FLUXO": "Movimento do Dia",
                 "SALDO_PROJETADO": "Saldo Projetado"
@@ -124,6 +130,9 @@ if url_planilha:
             use_container_width=True
         )
 
+        # =========================
+        # GRÁFICO
+        # =========================
         st.line_chart(
             fluxo.set_index("DATA_REAL")["SALDO_PROJETADO"]
         )
