@@ -14,7 +14,7 @@ st.set_page_config(page_title="Fluxo de Caixa Diário", layout="wide")
 col_title, col_logo = st.columns([3, 2])
 
 with col_title:
-    st.markdown("## 📊 Fluxo de Caixa Diário")
+    st.markdown("## 📊 Quadro de Fluxo de Caixa Diário")
 
 with col_logo:
     st.image("logo.png", width=340)
@@ -47,7 +47,11 @@ def formatar_real(valor):
     return f"R$ {valor:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
 
 def estilo_saldo(valor):
-    return "color: red; font-weight: bold;" if valor < 0 else "color: green; font-weight: bold;"
+    return (
+        "color: red; font-weight: bold;"
+        if valor < 0
+        else "color: green; font-weight: bold;"
+    )
 
 # =========================
 # INPUT
@@ -99,10 +103,29 @@ try:
     quadro["SALDO_FINAL_DIA"] = saldo_inicial + (quadro["RECEITA"] - quadro["DESPESA"]).cumsum()
 
     # =========================
-    # TABELA HTML ESTILIZADA
+    # 🔹 RESUMOS (DE VOLTA)
+    # =========================
+    col1, col2, col3 = st.columns(3)
+
+    col1.metric("Saldo Inicial", formatar_real(saldo_inicial))
+    col2.metric(
+        "Saldo Final Projetado",
+        formatar_real(quadro["SALDO_FINAL_DIA"].iloc[-1])
+    )
+    col3.metric(
+        "Resultado do Período",
+        formatar_real(quadro["RECEITA"].sum() - quadro["DESPESA"].sum())
+    )
+
+    st.markdown("---")
+
+    # =========================
+    # TABELA CENTRALIZADA (HTML)
     # =========================
     quadro_display = quadro.copy()
-    quadro_display["DATA_REAL"] = pd.to_datetime(quadro_display["DATA_REAL"]).dt.strftime("%d/%m/%Y")
+    quadro_display["DATA_REAL"] = pd.to_datetime(
+        quadro_display["DATA_REAL"]
+    ).dt.strftime("%d/%m/%Y")
 
     styled = (
         quadro_display[["DATA_REAL", "RECEITA", "DESPESA", "SALDO_FINAL_DIA"]]
@@ -121,6 +144,13 @@ try:
         .applymap(estilo_saldo, subset=["Saldo Final do Dia"])
         .set_table_styles([
             {
+                "selector": "table",
+                "props": [
+                    ("width", "100%"),
+                    ("margin", "0 auto")
+                ]
+            },
+            {
                 "selector": "th",
                 "props": [
                     ("background-color", "#1f4fd8"),
@@ -135,13 +165,13 @@ try:
                 "selector": "td",
                 "props": [
                     ("font-size", "13px"),
-                    ("padding", "6px")
+                    ("padding", "6px"),
+                    ("text-align", "center")
                 ]
             }
         ])
     )
 
-    st.subheader("📅 Quadro de Fluxo de Caixa Diário")
     st.markdown(styled.to_html(), unsafe_allow_html=True)
 
     # =========================
@@ -152,3 +182,4 @@ try:
 except Exception as e:
     st.error("Erro ao carregar a planilha automática.")
     st.exception(e)
+
