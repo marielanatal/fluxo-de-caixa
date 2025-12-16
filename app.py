@@ -9,15 +9,15 @@ from datetime import timedelta
 st.set_page_config(page_title="Fluxo de Caixa Diário", layout="wide")
 
 # =========================
-# TOPO: TÍTULO À ESQUERDA | LOGO À DIREITA
+# TOPO: TÍTULO À ESQUERDA | LOGO À DIREITA (MAIOR)
 # =========================
-col_title, col_logo = st.columns([4, 1])
+col_title, col_logo = st.columns([3, 2])
 
 with col_title:
     st.markdown("## 📊 Fluxo de Caixa Diário")
 
 with col_logo:
-    st.image("logo.png", width=820)  # <<< AQUI define o tamanho do logo
+    st.image("logo.png", width=340)  # <<< AQUI: logo BEM maior
 
 cal = Brazil()
 
@@ -42,10 +42,7 @@ def formatar_real(valor):
     return f"R$ {valor:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
 
 def estilo_saldo(valor):
-    if valor < 0:
-        return "color: red; font-weight: bold; font-size: 16px;"
-    else:
-        return "color: green; font-weight: bold; font-size: 16px;"
+    return "color: red; font-weight: bold; font-size: 16px;" if valor < 0 else "color: green; font-weight: bold; font-size: 16px;"
 
 # =========================
 # INPUTS
@@ -70,7 +67,6 @@ if url_planilha:
 
         # Padronizar colunas
         df.columns = df.columns.str.strip().str.upper()
-
         df = df.rename(columns={
             "DT. VENCIMENTO": "DATA_VENCIMENTO",
             "FORMA DE PAGAMENTO": "NATUREZA"
@@ -110,13 +106,9 @@ if url_planilha:
         # CARDS
         # =========================
         col1, col2, col3 = st.columns(3)
-
         col1.metric("Saldo Inicial", formatar_real(saldo_inicial))
         col2.metric("Saldo Final Projetado", formatar_real(quadro["SALDO_FINAL_DIA"].iloc[-1]))
-        col3.metric(
-            "Resultado do Período",
-            formatar_real(quadro["RECEITA"].sum() - quadro["DESPESA"].sum())
-        )
+        col3.metric("Resultado do Período", formatar_real(quadro["RECEITA"].sum() - quadro["DESPESA"].sum()))
 
         # =========================
         # TABELA
