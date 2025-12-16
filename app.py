@@ -9,23 +9,36 @@ from datetime import timedelta
 st.set_page_config(page_title="Fluxo de Caixa Diário", layout="wide")
 
 # =========================
-# CSS GLOBAL (QUEBRA O CONTAINER DO STREAMLIT)
+# CSS GLOBAL (AJUSTE FINO DE LAYOUT)
 # =========================
 st.markdown(
     """
     <style>
     .block-container {
-        padding-left: 2rem;
-        padding-right: 2rem;
+        padding-left: 0.8rem;
+        padding-right: 0.8rem;
         max-width: 100%;
     }
-    .tabela-full {
-        width: 100%;
-    }
+
     .tabela-full table {
         width: 100% !important;
-        margin-left: auto;
-        margin-right: auto;
+        margin: 0 auto;
+        border-collapse: collapse;
+    }
+
+    .tabela-full th {
+        background-color: #1f4fd8;
+        color: white;
+        font-weight: bold;
+        font-size: 15px;
+        text-align: center;
+        padding: 10px;
+    }
+
+    .tabela-full td {
+        font-size: 15px;
+        padding: 10px;
+        text-align: center;
     }
     </style>
     """,
@@ -133,7 +146,7 @@ try:
     st.markdown("---")
 
     # =========================
-    # TABELA FULL WIDTH
+    # TABELA
     # =========================
     quadro_display = quadro.copy()
     quadro_display["DATA_REAL"] = pd.to_datetime(quadro_display["DATA_REAL"]).dt.strftime("%d/%m/%Y")
@@ -153,27 +166,6 @@ try:
             "Saldo Final do Dia": formatar_real
         })
         .applymap(estilo_saldo, subset=["Saldo Final do Dia"])
-        .set_table_styles([
-            {
-                "selector": "th",
-                "props": [
-                    ("background-color", "#1f4fd8"),
-                    ("color", "white"),
-                    ("font-weight", "bold"),
-                    ("font-size", "14px"),
-                    ("text-align", "center"),
-                    ("padding", "8px")
-                ]
-            },
-            {
-                "selector": "td",
-                "props": [
-                    ("font-size", "13px"),
-                    ("padding", "6px"),
-                    ("text-align", "center")
-                ]
-            }
-        ])
     )
 
     st.markdown(
@@ -189,3 +181,4 @@ try:
 except Exception as e:
     st.error("Erro ao carregar a planilha automática.")
     st.exception(e)
+
