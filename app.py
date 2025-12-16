@@ -25,25 +25,35 @@ URL_PLANILHA = "https://raw.githubusercontent.com/marielanatal/fluxo-de-caixa/ma
 cal = Brazil()
 
 # =========================
-# FUNÇÕES DE DATA (ÚNICA REGRA)
+# FUNÇÕES DE DATA (REGRA FINAL)
 # =========================
-def proximo_dia_util(data):
-    """Avança até encontrar um dia útil (segunda a sexta, sem feriados)."""
+def ajustar_para_dia_util(data):
+    """Ajusta SOMENTE se cair em sábado, domingo ou feriado."""
+    if cal.is_working_day(data):
+        return data
     while not cal.is_working_day(data):
         data += timedelta(days=1)
     return data
+
 
 def calcular_data_real(row):
     data = row["DATA_VENCIMENTO"]
 
     if row["TIPO"] == "RECEITA":
         if row["NATUREZA"] == "BOLETO":
-            data = data + timedelta(days=1)  # boleto cai no dia seguinte
-        # PIX / TED usam a própria data
+            # boleto cai em D+1
+            data = data + timedelta(days=1)
+            data = ajustar_para_dia_util(data)
+        else:
+            # PIX / TED
+            data = ajustar_para_dia_util(data)
 
-    # PARA RECEITA E DESPESA:
-    # garante que não fique em sábado, domingo ou feriado
-    return proximo_dia_util(data)
+    elif row["TIPO"] == "DESPESA":
+        # despesa nunca soma dia, só ajusta se não for dia útil
+        data = ajustar_para_dia_util(data)
+
+    return data
+
 
 def formatar_real(valor):
     return f"R$ {valor:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
@@ -73,7 +83,7 @@ df["TIPO"] = df["TIPO"].str.upper().str.strip()
 df["NATUREZA"] = df["NATUREZA"].astype(str).str.upper().str.strip()
 
 # =========================
-# DATA REAL (REGRA FINAL)
+# DATA REAL (CORRIGIDA)
 # =========================
 df["DATA_REAL"] = df.apply(calcular_data_real, axis=1)
 df["DATA_REAL"] = pd.to_datetime(df["DATA_REAL"])
@@ -123,7 +133,7 @@ c3.metric(
 st.markdown("---")
 
 # =========================
-# TABELA HTML
+# TABELA HTML (ESTILO TABELA REAL)
 # =========================
 html = """
 <style>
@@ -177,7 +187,7 @@ html += "</table>"
 components.html(html, height=650, scrolling=True)
 
 # =========================
-# GRÁFICO
+# GRÁFICO (SALDO PROJETADO)
 # =========================
 st.line_chart(
     quadro.set_index("DATA_REAL")["Saldo Final do Dia"]
