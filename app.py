@@ -9,15 +9,15 @@ from datetime import timedelta
 st.set_page_config(page_title="Fluxo de Caixa Diário", layout="wide")
 
 # =========================
-# LOGO + TÍTULO
+# TOPO: TÍTULO À ESQUERDA | LOGO À DIREITA
 # =========================
-col_logo, col_title = st.columns([1, 5])
-
-with col_logo:
-    st.image("logo.png", width=130)
+col_title, col_logo = st.columns([4, 1])
 
 with col_title:
     st.markdown("## 📊 Fluxo de Caixa Diário")
+
+with col_logo:
+    st.image("logo.png", width=220)  # <<< AQUI define o tamanho do logo
 
 cal = Brazil()
 
