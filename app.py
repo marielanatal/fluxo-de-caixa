@@ -16,7 +16,7 @@ col_title, col_logo = st.columns([3, 2])
 with col_title:
     st.markdown("## 📊 Quadro de Fluxo de Caixa Diário")
 with col_logo:
-    st.image("logo.png", width=340)
+    st.image("logo.png", width=220)
 
 # =========================
 # CONFIGURAÇÃO FIXA
