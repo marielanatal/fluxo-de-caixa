@@ -31,21 +31,24 @@ def calcular_data_real(row):
 def formatar_real(valor):
     return f"R$ {valor:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
 
-def cor_negativo(valor):
-    return "color: red; font-weight: bold;" if valor < 0 else ""
+def estilo_saldo(valor):
+    if valor < 0:
+        return "color: red; font-weight: bold; font-size: 16px;"
+    else:
+        return "color: green; font-weight: bold; font-size: 16px;"
 
 # =========================
-# INPUTS
+# INPUTS (ORDEM NOVA)
 # =========================
+url_planilha = st.text_input(
+    "URL RAW do Excel no GitHub",
+    placeholder="https://raw.githubusercontent.com/usuario/repositorio/main/fluxo.xlsx"
+)
+
 saldo_inicial = st.number_input(
     "Saldo atual em conta",
     value=0.0,
     format="%.2f"
-)
-
-url_planilha = st.text_input(
-    "URL RAW do Excel no GitHub",
-    placeholder="https://raw.githubusercontent.com/usuario/repositorio/main/fluxo.xlsx"
 )
 
 # =========================
@@ -67,11 +70,11 @@ if url_planilha:
         df["TIPO"] = df["TIPO"].str.upper().str.strip()
         df["NATUREZA"] = df["NATUREZA"].astype(str).str.upper().str.strip()
 
-        # Data real de impacto no caixa
+        # Data real
         df["DATA_REAL"] = df.apply(calcular_data_real, axis=1)
         df["DATA_REAL"] = pd.to_datetime(df["DATA_REAL"]).dt.date
 
-        # Receitas e despesas por dia
+        # Receitas e despesas
         receitas = (
             df[df["TIPO"] == "RECEITA"]
             .groupby("DATA_REAL")["VALOR"]
@@ -92,23 +95,22 @@ if url_planilha:
         quadro = pd.merge(receitas, despesas, on="DATA_REAL", how="outer").fillna(0)
         quadro = quadro.sort_values("DATA_REAL")
 
-        # Saldo acumulado (sem mostrar resultado do dia)
         quadro["SALDO_FINAL_DIA"] = saldo_inicial + (quadro["RECEITA"] - quadro["DESPESA"]).cumsum()
 
         # =========================
-        # CARDS
+        # CARDS (SALDO EM FOCO)
         # =========================
         col1, col2, col3 = st.columns(3)
 
         col1.metric("Saldo Inicial", formatar_real(saldo_inicial))
         col2.metric("Saldo Final Projetado", formatar_real(quadro["SALDO_FINAL_DIA"].iloc[-1]))
         col3.metric(
-            "Total do Período",
+            "Resultado do Período",
             formatar_real(quadro["RECEITA"].sum() - quadro["DESPESA"].sum())
         )
 
         # =========================
-        # TABELA FINAL (LIMPA)
+        # TABELA FINAL
         # =========================
         quadro_display = quadro.copy()
 
@@ -130,7 +132,7 @@ if url_planilha:
                 "Despesa": formatar_real,
                 "Saldo Final do Dia": formatar_real
             })
-            .applymap(cor_negativo, subset=["Saldo Final do Dia"])
+            .applymap(estilo_saldo, subset=["Saldo Final do Dia"])
         )
 
         st.subheader("📅 Quadro de Fluxo de Caixa Diário")
@@ -144,5 +146,4 @@ if url_planilha:
     except Exception as e:
         st.error("Erro ao processar a planilha.")
         st.exception(e)
-
 
