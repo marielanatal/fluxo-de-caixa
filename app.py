@@ -47,11 +47,7 @@ def formatar_real(valor):
     return f"R$ {valor:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
 
 def estilo_saldo(valor):
-    return (
-        "color: red; font-weight: bold;"
-        if valor < 0
-        else "color: green; font-weight: bold;"
-    )
+    return "color: red; font-weight: bold;" if valor < 0 else "color: green; font-weight: bold;"
 
 # =========================
 # INPUT
@@ -103,15 +99,7 @@ try:
     quadro["SALDO_FINAL_DIA"] = saldo_inicial + (quadro["RECEITA"] - quadro["DESPESA"]).cumsum()
 
     # =========================
-    # CARDS
-    # =========================
-    col1, col2, col3 = st.columns(3)
-    col1.metric("Saldo Inicial", formatar_real(saldo_inicial))
-    col2.metric("Saldo Final Projetado", formatar_real(quadro["SALDO_FINAL_DIA"].iloc[-1]))
-    col3.metric("Resultado do Período", formatar_real(quadro["RECEITA"].sum() - quadro["DESPESA"].sum()))
-
-    # =========================
-    # TABELA COM CABEÇALHO AZUL
+    # TABELA HTML ESTILIZADA
     # =========================
     quadro_display = quadro.copy()
     quadro_display["DATA_REAL"] = pd.to_datetime(quadro_display["DATA_REAL"]).dt.strftime("%d/%m/%Y")
@@ -139,20 +127,22 @@ try:
                     ("color", "white"),
                     ("font-weight", "bold"),
                     ("font-size", "14px"),
-                    ("text-align", "center")
+                    ("text-align", "center"),
+                    ("padding", "8px")
                 ]
             },
             {
                 "selector": "td",
                 "props": [
-                    ("font-size", "13px")
+                    ("font-size", "13px"),
+                    ("padding", "6px")
                 ]
             }
         ])
     )
 
     st.subheader("📅 Quadro de Fluxo de Caixa Diário")
-    st.dataframe(styled, use_container_width=True)
+    st.markdown(styled.to_html(), unsafe_allow_html=True)
 
     # =========================
     # GRÁFICO
@@ -162,4 +152,3 @@ try:
 except Exception as e:
     st.error("Erro ao carregar a planilha automática.")
     st.exception(e)
-
