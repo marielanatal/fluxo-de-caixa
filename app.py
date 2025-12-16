@@ -1,12 +1,16 @@
 import streamlit as st
 import pandas as pd
-from workalendar.america import Brazil
+from workalendar.america.brazil import Brazil
 from datetime import timedelta
 
 # =========================
-# CONFIG
+# CONFIGURAÇÃO DA PÁGINA
 # =========================
-st.set_page_config(page_title="Fluxo de Caixa Projetado", layout="wide")
+st.set_page_config(
+    page_title="Fluxo de Caixa Projetado",
+    layout="wide"
+)
+
 st.title("📊 Fluxo de Caixa Projetado")
 
 cal = Brazil()
@@ -21,19 +25,19 @@ def proximo_dia_util(data):
     return data
 
 def calcular_data_real(row):
-    if row["tipo"] == "RECEITA":
-        if row["natureza"] in ["PIX", "TED"]:
-            return row["data_vencimento"]
-        elif row["natureza"] == "BOLETO":
-            return proximo_dia_util(row["data_vencimento"])
-    return row["data_vencimento"]
+    if row["TIPO"] == "RECEITA":
+        if row["NATUREZA"] in ["PIX", "TED"]:
+            return row["DATA_VENCIMENTO"]
+        elif row["NATUREZA"] == "BOLETO":
+            return proximo_dia_util(row["DATA_VENCIMENTO"])
+    return row["DATA_VENCIMENTO"]
 
 # =========================
 # INPUTS
 # =========================
 saldo_inicial = st.number_input(
     "Saldo atual em conta",
-    value=845475.63,
+    value=0.0,
     format="%.2f"
 )
 
@@ -46,41 +50,85 @@ url_planilha = st.text_input(
 # PROCESSAMENTO
 # =========================
 if url_planilha:
-    df = pd.read_excel(url_planilha)
-    df["data_vencimento"] = pd.to_datetime(df["data_vencimento"])
 
-    df["data_real"] = df.apply(calcular_data_real, axis=1)
+    try:
+        df = pd.read_excel(url_planilha)
 
-    df["valor_fluxo"] = df.apply(
-        lambda x: x["valor"] if x["tipo"] == "RECEITA" else -x["valor"],
-        axis=1
-    )
+        # Padronizar colunas
+        df.columns = (
+            df.columns
+            .str.strip()
+            .str.upper()
+        )
 
-    fluxo = (
-        df.groupby("data_real", as_index=False)["valor_fluxo"]
-        .sum()
-        .sort_values("data_real")
-    )
+        # Renomear colunas para padrão interno
+        df = df.rename(columns={
+            "DT. VENCIMENTO": "DATA_VENCIMENTO",
+            "FORMA DE PAGAMENTO": "NATUREZA"
+        })
 
-    fluxo["saldo"] = saldo_inicial + fluxo["valor_fluxo"].cumsum()
+        # Converter data
+        df["DATA_VENCIMENTO"] = pd.to_datetime(df["DATA_VENCIMENTO"])
 
-    # =========================
-    # VISUAL
-    # =========================
-    col1, col2, col3 = st.columns(3)
+        # Padronizar textos
+        df["TIPO"] = df["TIPO"].str.upper().str.strip()
+        df["NATUREZA"] = df["NATUREZA"].str.upper().str.strip()
 
-    col1.metric("Saldo Inicial", f"R$ {saldo_inicial:,.2f}")
-    col2.metric("Saldo Final Projetado", f"R$ {fluxo.iloc[-1]['saldo']:,.2f}")
-    col3.metric("Variação no Período", f"R$ {(fluxo['valor_fluxo'].sum()):,.2f}")
+        # Calcular data real de entrada
+        df["DATA_REAL"] = df.apply(calcular_data_real, axis=1)
 
-    st.subheader("📅 Evolução Diária do Saldo")
-    st.dataframe(
-        fluxo.rename(columns={
-            "data_real": "Data",
-            "valor_fluxo": "Movimento do Dia",
-            "saldo": "Saldo Projetado"
-        }),
-        use_container_width=True
-    )
+        # Criar valor de fluxo (+ receita / - despesa)
+        df["VALOR_FLUXO"] = df.apply(
+            lambda x: x["VALOR"] if x["TIPO"] == "RECEITA" else -x["VALOR"],
+            axis=1
+        )
 
-    st.line_chart(fluxo.set_index("data_real")["saldo"])
+        # Agrupar por dia
+        fluxo = (
+            df.groupby("DATA_REAL", as_index=False)["VALOR_FLUXO"]
+            .sum()
+            .sort_values("DATA_REAL")
+        )
+
+        # Calcular saldo acumulado
+        fluxo["SALDO_PROJETADO"] = saldo_inicial + fluxo["VALOR_FLUXO"].cumsum()
+
+        # =========================
+        # VISUAL
+        # =========================
+        col1, col2, col3 = st.columns(3)
+
+        col1.metric(
+            "Saldo Inicial",
+            f"R$ {saldo_inicial:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
+        )
+
+        col2.metric(
+            "Saldo Final Projetado",
+            f"R$ {fluxo.iloc[-1]['SALDO_PROJETADO']:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
+        )
+
+        col3.metric(
+            "Variação no Período",
+            f"R$ {fluxo['VALOR_FLUXO'].sum():,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
+        )
+
+        st.subheader("📅 Evolução Diária do Saldo")
+
+        st.dataframe(
+            fluxo.rename(columns={
+                "DATA_REAL": "Data",
+                "VALOR_FLUXO": "Movimento do Dia",
+                "SALDO_PROJETADO": "Saldo Projetado"
+            }),
+            use_container_width=True
+        )
+
+        st.line_chart(
+            fluxo.set_index("DATA_REAL")["SALDO_PROJETADO"]
+        )
+
+    except Exception as e:
+        st.error("Erro ao processar a planilha. Verifique a URL RAW e o formato dos dados.")
+        st.exception(e)
+
