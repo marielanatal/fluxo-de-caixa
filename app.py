@@ -4,14 +4,10 @@ from workalendar.america.brazil import Brazil
 from datetime import timedelta
 
 # =========================
-# CONFIGURAÇÃO DA PÁGINA
+# CONFIGURAÇÃO
 # =========================
-st.set_page_config(
-    page_title="Fluxo de Caixa Projetado",
-    layout="wide"
-)
-
-st.title("📊 Fluxo de Caixa Projetado")
+st.set_page_config(page_title="Fluxo de Caixa Diário", layout="wide")
+st.title("📊 Fluxo de Caixa Diário")
 
 cal = Brazil()
 
@@ -55,89 +51,88 @@ url_planilha = st.text_input(
 if url_planilha:
 
     try:
-        # Ler planilha
         df = pd.read_excel(url_planilha)
 
-        # Padronizar nomes das colunas
-        df.columns = (
-            df.columns
-            .str.strip()
-            .str.upper()
-        )
+        # Padronizar colunas
+        df.columns = df.columns.str.strip().str.upper()
 
-        # Renomear colunas para padrão interno
         df = df.rename(columns={
             "DT. VENCIMENTO": "DATA_VENCIMENTO",
             "FORMA DE PAGAMENTO": "NATUREZA"
         })
 
-        # Converter datas (sem hora)
         df["DATA_VENCIMENTO"] = pd.to_datetime(df["DATA_VENCIMENTO"]).dt.date
-
-        # Padronizar textos
-        df["TIPO"] = df["TIPO"].astype(str).str.upper().str.strip()
+        df["TIPO"] = df["TIPO"].str.upper().str.strip()
         df["NATUREZA"] = df["NATUREZA"].astype(str).str.upper().str.strip()
 
-        # Calcular data real de entrada/saída
+        # Data real de impacto no caixa
         df["DATA_REAL"] = df.apply(calcular_data_real, axis=1)
         df["DATA_REAL"] = pd.to_datetime(df["DATA_REAL"]).dt.date
 
-        # Criar valor de fluxo (+ receita / - despesa)
-        df["VALOR_FLUXO"] = df.apply(
-            lambda x: x["VALOR"] if x["TIPO"] == "RECEITA" else -x["VALOR"],
-            axis=1
-        )
-
-        # Agrupar por dia
-        fluxo = (
-            df.groupby("DATA_REAL", as_index=False)["VALOR_FLUXO"]
+        # Separar receitas e despesas
+        receitas = (
+            df[df["TIPO"] == "RECEITA"]
+            .groupby("DATA_REAL")["VALOR"]
             .sum()
-            .sort_values("DATA_REAL")
+            .reset_index()
+            .rename(columns={"VALOR": "RECEITA"})
         )
 
-        # Calcular saldo acumulado
-        fluxo["SALDO_PROJETADO"] = saldo_inicial + fluxo["VALOR_FLUXO"].cumsum()
+        despesas = (
+            df[df["TIPO"] == "DESPESA"]
+            .groupby("DATA_REAL")["VALOR"]
+            .sum()
+            .reset_index()
+            .rename(columns={"VALOR": "DESPESA"})
+        )
+
+        # Criar quadro base com todas as datas
+        quadro = pd.merge(receitas, despesas, on="DATA_REAL", how="outer").fillna(0)
+        quadro = quadro.sort_values("DATA_REAL")
+
+        # Resultado e saldo
+        quadro["RESULTADO"] = quadro["RECEITA"] - quadro["DESPESA"]
+        quadro["SALDO"] = saldo_inicial + quadro["RESULTADO"].cumsum()
 
         # =========================
-        # VISUAL - CARDS
+        # EXIBIÇÃO FORMATADA
+        # =========================
+        quadro_exibicao = quadro.copy()
+
+        quadro_exibicao["DATA_REAL"] = pd.to_datetime(
+            quadro_exibicao["DATA_REAL"]
+        ).dt.strftime("%d/%m/%Y")
+
+        for col in ["RECEITA", "DESPESA", "RESULTADO", "SALDO"]:
+            quadro_exibicao[col] = quadro_exibicao[col].apply(formatar_real)
+
+        # =========================
+        # CARDS
         # =========================
         col1, col2, col3 = st.columns(3)
 
         col1.metric("Saldo Inicial", formatar_real(saldo_inicial))
-        col2.metric("Saldo Final Projetado", formatar_real(fluxo.iloc[-1]["SALDO_PROJETADO"]))
-        col3.metric("Variação no Período", formatar_real(fluxo["VALOR_FLUXO"].sum()))
+        col2.metric("Saldo Final Projetado", formatar_real(quadro["SALDO"].iloc[-1]))
+        col3.metric("Resultado no Período", formatar_real(quadro["RESULTADO"].sum()))
 
-        # =========================
-        # TABELA FORMATADA
-        # =========================
-        fluxo_exibicao = fluxo.copy()
-
-        fluxo_exibicao["DATA_REAL"] = pd.to_datetime(
-            fluxo_exibicao["DATA_REAL"]
-        ).dt.strftime("%d/%m/%Y")
-
-        fluxo_exibicao["VALOR_FLUXO"] = fluxo_exibicao["VALOR_FLUXO"].apply(formatar_real)
-        fluxo_exibicao["SALDO_PROJETADO"] = fluxo_exibicao["SALDO_PROJETADO"].apply(formatar_real)
-
-        st.subheader("📅 Evolução Diária do Saldo")
+        st.subheader("📅 Quadro de Fluxo de Caixa Diário")
 
         st.dataframe(
-            fluxo_exibicao.rename(columns={
+            quadro_exibicao.rename(columns={
                 "DATA_REAL": "Data",
-                "VALOR_FLUXO": "Movimento do Dia",
-                "SALDO_PROJETADO": "Saldo Projetado"
+                "RECEITA": "Receita",
+                "DESPESA": "Despesa",
+                "RESULTADO": "Resultado do Dia",
+                "SALDO": "Saldo"
             }),
             use_container_width=True
         )
 
-        # =========================
-        # GRÁFICO
-        # =========================
         st.line_chart(
-            fluxo.set_index("DATA_REAL")["SALDO_PROJETADO"]
+            quadro.set_index("DATA_REAL")["SALDO"]
         )
 
     except Exception as e:
-        st.error("Erro ao processar a planilha. Verifique a URL RAW e o formato dos dados.")
+        st.error("Erro ao processar a planilha.")
         st.exception(e)
 
