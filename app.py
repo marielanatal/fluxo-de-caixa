@@ -9,6 +9,30 @@ from datetime import timedelta
 st.set_page_config(page_title="Fluxo de Caixa Diário", layout="wide")
 
 # =========================
+# CSS GLOBAL (QUEBRA O CONTAINER DO STREAMLIT)
+# =========================
+st.markdown(
+    """
+    <style>
+    .block-container {
+        padding-left: 2rem;
+        padding-right: 2rem;
+        max-width: 100%;
+    }
+    .tabela-full {
+        width: 100%;
+    }
+    .tabela-full table {
+        width: 100% !important;
+        margin-left: auto;
+        margin-right: auto;
+    }
+    </style>
+    """,
+    unsafe_allow_html=True
+)
+
+# =========================
 # TOPO
 # =========================
 col_title, col_logo = st.columns([3, 2])
@@ -47,11 +71,7 @@ def formatar_real(valor):
     return f"R$ {valor:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
 
 def estilo_saldo(valor):
-    return (
-        "color: red; font-weight: bold;"
-        if valor < 0
-        else "color: green; font-weight: bold;"
-    )
+    return "color: red; font-weight: bold;" if valor < 0 else "color: green; font-weight: bold;"
 
 # =========================
 # INPUT
@@ -103,29 +123,20 @@ try:
     quadro["SALDO_FINAL_DIA"] = saldo_inicial + (quadro["RECEITA"] - quadro["DESPESA"]).cumsum()
 
     # =========================
-    # 🔹 RESUMOS (DE VOLTA)
+    # RESUMOS
     # =========================
     col1, col2, col3 = st.columns(3)
-
     col1.metric("Saldo Inicial", formatar_real(saldo_inicial))
-    col2.metric(
-        "Saldo Final Projetado",
-        formatar_real(quadro["SALDO_FINAL_DIA"].iloc[-1])
-    )
-    col3.metric(
-        "Resultado do Período",
-        formatar_real(quadro["RECEITA"].sum() - quadro["DESPESA"].sum())
-    )
+    col2.metric("Saldo Final Projetado", formatar_real(quadro["SALDO_FINAL_DIA"].iloc[-1]))
+    col3.metric("Resultado do Período", formatar_real(quadro["RECEITA"].sum() - quadro["DESPESA"].sum()))
 
     st.markdown("---")
 
     # =========================
-    # TABELA CENTRALIZADA (HTML)
+    # TABELA FULL WIDTH
     # =========================
     quadro_display = quadro.copy()
-    quadro_display["DATA_REAL"] = pd.to_datetime(
-        quadro_display["DATA_REAL"]
-    ).dt.strftime("%d/%m/%Y")
+    quadro_display["DATA_REAL"] = pd.to_datetime(quadro_display["DATA_REAL"]).dt.strftime("%d/%m/%Y")
 
     styled = (
         quadro_display[["DATA_REAL", "RECEITA", "DESPESA", "SALDO_FINAL_DIA"]]
@@ -143,13 +154,6 @@ try:
         })
         .applymap(estilo_saldo, subset=["Saldo Final do Dia"])
         .set_table_styles([
-            {
-                "selector": "table",
-                "props": [
-                    ("width", "100%"),
-                    ("margin", "0 auto")
-                ]
-            },
             {
                 "selector": "th",
                 "props": [
@@ -172,7 +176,10 @@ try:
         ])
     )
 
-    st.markdown(styled.to_html(), unsafe_allow_html=True)
+    st.markdown(
+        f"<div class='tabela-full'>{styled.to_html()}</div>",
+        unsafe_allow_html=True
+    )
 
     # =========================
     # GRÁFICO
@@ -182,4 +189,3 @@ try:
 except Exception as e:
     st.error("Erro ao carregar a planilha automática.")
     st.exception(e)
-
