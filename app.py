@@ -1,20 +1,26 @@
 import os
+from io import BytesIO
+from datetime import timedelta, datetime
+
 import pandas as pd
 import streamlit as st
-from datetime import timedelta
 import streamlit.components.v1 as components
 from workalendar.america.brazil import Brazil
+
+# PDF (ReportLab)
+from reportlab.lib.pagesizes import A4, landscape
+from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer, Image
+from reportlab.lib import colors
+from reportlab.lib.styles import getSampleStyleSheet
+from reportlab.lib.units import cm
 
 # =========================
 # CONFIG
 # =========================
 st.set_page_config(page_title="Fluxo de Caixa Projetado", layout="wide")
 
-# =========================
-# ARQUIVOS DO REPO (AUTOMÁTICO)
-# =========================
-PLANILHA_LOCAL = "fluxo.xlsx"   # fica no seu GitHub, junto do app.py
-LOGO_LOCAL = "logo.png"        # opcional, se existir
+PLANILHA_LOCAL = "fluxo.xlsx"   # no repo
+LOGO_LOCAL = "logo.png"        # opcional
 
 cal = Brazil()
 
@@ -22,32 +28,33 @@ cal = Brazil()
 # FUNÇÕES
 # =========================
 def brl(v: float) -> str:
-    return f"R$ {v:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
+    s = f"{v:,.2f}"
+    s = s.replace(",", "X").replace(".", ",").replace("X", ".")
+    return f"R$ {s}"
 
 def proximo_dia_util(d):
-    # dia útil = seg-sex e não feriado (Brasil)
+    # seg-sex e não feriado BR
     while not cal.is_working_day(d):
         d += timedelta(days=1)
     return d
 
 def proximo_dia_util_apos(d):
-    # próximo dia útil depois de d
     return proximo_dia_util(d + timedelta(days=1))
 
 def normalizar_forma(s):
     s = str(s).upper().strip()
-    # padrões da sua planilha
     if "BOLETO" in s:
         return "BOLETO"
     if "TED" in s or "PIX" in s:
         return "TED/PIX"
-    return s  # outros ficam como estão
+    return s
 
 def calcular_data_real(row):
     """
-    REGRA IGUAL AO EXCEL:
-    1) Primeiro normaliza o vencimento para dia útil (se cair em fim de semana/feriado)
-    2) Depois aplica a regra do boleto (D+1 útil)
+    REGRA FINAL QUE BATEU COM SEU EXCEL:
+    1) Normaliza vencimento para dia útil
+    2) Se BOLETO: aplica D+1 útil (após o vencimento útil)
+    3) Caso contrário: fica no vencimento útil
     """
     venc = row["DATA_VENCIMENTO"]
     tipo = row["TIPO"]
@@ -56,10 +63,8 @@ def calcular_data_real(row):
     venc_util = proximo_dia_util(venc)
 
     if tipo == "RECEITA" and forma == "BOLETO":
-        # Boleto cai no "dia seguinte" (próximo dia útil após o vencimento útil)
         return proximo_dia_util_apos(venc_util)
 
-    # TED/PIX e DESPESA: ficam no dia útil (não deixa cair em sábado/domingo/feriado)
     return venc_util
 
 @st.cache_data(show_spinner=False)
@@ -67,7 +72,6 @@ def carregar_planilha(path):
     df = pd.read_excel(path)
     df.columns = df.columns.str.strip().str.upper()
 
-    # mapeia colunas
     df = df.rename(columns={
         "DT. VENCIMENTO": "DATA_VENCIMENTO",
         "FORMA DE PAGAMENTO": "FORMA_PAGAMENTO"
@@ -83,11 +87,111 @@ def carregar_planilha(path):
     df["VALOR"] = pd.to_numeric(df["VALOR"], errors="coerce").fillna(0.0)
     df["FORMA_N"] = df["FORMA_PAGAMENTO"].apply(normalizar_forma)
 
-    # data real (regra final)
     df["DATA_REAL"] = df.apply(calcular_data_real, axis=1)
     df["DATA_REAL"] = pd.to_datetime(df["DATA_REAL"])
 
     return df
+
+def gerar_pdf_tabela(diario: pd.DataFrame, saldo_inicial: float) -> bytes:
+    """
+    Gera PDF somente da tabela (Data, Receita, Despesa, Saldo Final do Dia),
+    com estilo “corporativo” e saldo negativo em vermelho.
+    """
+    buffer = BytesIO()
+    doc = SimpleDocTemplate(
+        buffer,
+        pagesize=landscape(A4),
+        leftMargin=1.2*cm,
+        rightMargin=1.2*cm,
+        topMargin=1.0*cm,
+        bottomMargin=1.0*cm
+    )
+
+    styles = getSampleStyleSheet()
+    story = []
+
+    # Cabeçalho com logo (se existir) + título
+    header = []
+    if os.path.exists(LOGO_LOCAL):
+        try:
+            img = Image(LOGO_LOCAL, width=5.5*cm, height=2.0*cm)
+            header.append(img)
+        except Exception:
+            pass
+
+    titulo = Paragraph("<b>Fluxo de Caixa Projetado</b>", styles["Title"])
+    subtitulo = Paragraph(
+        f"Saldo inicial: <b>{brl(saldo_inicial)}</b> &nbsp;&nbsp;|&nbsp;&nbsp; Gerado em: {datetime.now().strftime('%d/%m/%Y %H:%M')}",
+        styles["Normal"]
+    )
+
+    if header:
+        # logo + titulo lado a lado
+        t = Table([[header[0], titulo]], colWidths=[6.0*cm, 20.0*cm])
+        t.setStyle(TableStyle([
+            ("VALIGN", (0,0), (-1,-1), "MIDDLE"),
+            ("LEFTPADDING", (0,0), (-1,-1), 0),
+            ("RIGHTPADDING", (0,0), (-1,-1), 0),
+            ("TOPPADDING", (0,0), (-1,-1), 0),
+            ("BOTTOMPADDING", (0,0), (-1,-1), 0),
+        ]))
+        story.append(t)
+    else:
+        story.append(titulo)
+
+    story.append(subtitulo)
+    story.append(Spacer(1, 10))
+
+    # Monta dados da tabela
+    data = [["Data", "Receita", "Despesa", "Saldo Final do Dia"]]
+    for _, r in diario.iterrows():
+        data.append([
+            r["DATA_REAL"].strftime("%d/%m/%Y"),
+            brl(float(r["Receita"])),
+            brl(float(r["Despesa"])),
+            brl(float(r["Saldo Final do Dia"])),
+        ])
+
+    # Larguras (paisagem A4)
+    col_widths = [4.0*cm, 6.5*cm, 6.5*cm, 7.0*cm]
+    table = Table(data, colWidths=col_widths, repeatRows=1)
+
+    # Estilo base
+    style = TableStyle([
+        ("BACKGROUND", (0,0), (-1,0), colors.HexColor("#1f4fd8")),
+        ("TEXTCOLOR", (0,0), (-1,0), colors.white),
+        ("FONTNAME", (0,0), (-1,0), "Helvetica-Bold"),
+        ("FONTSIZE", (0,0), (-1,0), 12),
+
+        ("FONTNAME", (0,1), (-1,-1), "Helvetica"),
+        ("FONTSIZE", (0,1), (-1,-1), 11),
+
+        ("ALIGN", (0,0), (-1,0), "CENTER"),
+        ("ALIGN", (0,1), (0,-1), "CENTER"),
+        ("ALIGN", (1,1), (-1,-1), "RIGHT"),
+
+        ("GRID", (0,0), (-1,-1), 0.7, colors.lightgrey),
+        ("ROWBACKGROUNDS", (0,1), (-1,-1), [colors.white, colors.HexColor("#f7f9fc")]),
+        ("VALIGN", (0,0), (-1,-1), "MIDDLE"),
+        ("TOPPADDING", (0,0), (-1,-1), 8),
+        ("BOTTOMPADDING", (0,0), (-1,-1), 8),
+    ])
+
+    # Saldo negativo em vermelho / positivo em verde
+    for i in range(1, len(data)):
+        saldo_val = float(diario.iloc[i-1]["Saldo Final do Dia"])
+        if saldo_val < 0:
+            style.add("TEXTCOLOR", (3,i), (3,i), colors.red)
+            style.add("FONTNAME", (3,i), (3,i), "Helvetica-Bold")
+        else:
+            style.add("TEXTCOLOR", (3,i), (3,i), colors.HexColor("#0a7a2f"))
+            style.add("FONTNAME", (3,i), (3,i), "Helvetica-Bold")
+
+    table.setStyle(style)
+    story.append(table)
+
+    doc.build(story)
+    return buffer.getvalue()
 
 # =========================
 # TOPO
@@ -108,15 +212,10 @@ saldo_inicial = st.number_input("Saldo Inicial (Hoje)", value=0.0, format="%.2f"
 # LEITURA (AUTOMÁTICA)
 # =========================
 if not os.path.exists(PLANILHA_LOCAL):
-    st.error(f"Não achei o arquivo **{PLANILHA_LOCAL}** no repositório. Coloque ele na raiz do projeto (junto do app.py).")
+    st.error(f"Não achei o arquivo **{PLANILHA_LOCAL}** no repositório. Coloque ele na raiz (junto do app.py).")
     st.stop()
 
-try:
-    df = carregar_planilha(PLANILHA_LOCAL)
-except Exception as e:
-    st.error("Erro ao processar a planilha.")
-    st.exception(e)
-    st.stop()
+df = carregar_planilha(PLANILHA_LOCAL)
 
 # =========================
 # CONSOLIDAÇÃO DIÁRIA
@@ -127,13 +226,12 @@ diario = (
       .unstack(fill_value=0)
       .reset_index()
 )
-
 diario["Receita"] = diario.get("RECEITA", 0.0)
 diario["Despesa"] = diario.get("DESPESA", 0.0)
 diario = diario[["DATA_REAL", "Receita", "Despesa"]].sort_values("DATA_REAL")
 
 # =========================
-# SALDO ENCADEADO (IGUAL EXCEL)
+# SALDO ENCADEADO
 # =========================
 saldo = saldo_inicial
 saldos = []
@@ -149,18 +247,27 @@ a, b, c = st.columns(3)
 a.metric("Saldo Inicial (Hoje)", brl(saldo_inicial))
 b.metric("Saldo Final Projetado", brl(diario["Saldo Final do Dia"].iloc[-1] if len(diario) else saldo_inicial))
 c.metric("Resultado do Período", brl(diario["Receita"].sum() - diario["Despesa"].sum()))
-
 st.markdown("---")
 
 # =========================
-# TABELA (CENTRALIZADA + LINHAS)
+# BOTÃO PDF (SÓ TABELA)
+# =========================
+pdf_bytes = gerar_pdf_tabela(diario, saldo_inicial)
+nome_pdf = f"Fluxo_Caixa_{datetime.now().strftime('%d-%m-%Y')}.pdf"
+
+st.download_button(
+    label="📄 Baixar PDF da Tabela",
+    data=pdf_bytes,
+    file_name=nome_pdf,
+    mime="application/pdf"
+)
+
+# =========================
+# TABELA (TELA)
 # =========================
 html = """
 <style>
-.wrap {
-  max-width: 1200px;
-  margin: 0 auto;
-}
+.wrap { max-width: 1200px; margin: 0 auto; }
 table { width:100%; border-collapse:collapse; font-size:18px }
 th, td { border:1px solid #cfcfcf; padding:12px; text-align:center }
 th { background:#1f4fd8; color:white; font-weight:800 }
@@ -182,9 +289,9 @@ for _, r in diario.iterrows():
     html += f"""
     <tr>
       <td>{r['DATA_REAL'].strftime('%d/%m/%Y')}</td>
-      <td>{brl(r['Receita'])}</td>
-      <td>{brl(r['Despesa'])}</td>
-      <td class="{cls}">{brl(r['Saldo Final do Dia'])}</td>
+      <td>{brl(float(r['Receita']))}</td>
+      <td>{brl(float(r['Despesa']))}</td>
+      <td class="{cls}">{brl(float(r['Saldo Final do Dia']))}</td>
     </tr>
     """
 
@@ -196,13 +303,3 @@ components.html(html, height=650, scrolling=True)
 # =========================
 if len(diario):
     st.line_chart(diario.set_index("DATA_REAL")["Saldo Final do Dia"])
-
-# =========================
-# (Opcional) Auditoria rápida
-# =========================
-with st.expander("🔎 Conferência (como o app jogou as datas)"):
-    aud = df[["TIPO", "FORMA_PAGAMENTO", "FORMA_N", "DATA_VENCIMENTO", "DATA_REAL", "VALOR"]].copy()
-    aud["DATA_VENCIMENTO"] = pd.to_datetime(aud["DATA_VENCIMENTO"]).dt.strftime("%d/%m/%Y")
-    aud["DATA_REAL"] = pd.to_datetime(aud["DATA_REAL"]).dt.strftime("%d/%m/%Y")
-    st.dataframe(aud.sort_values(["DATA_REAL", "TIPO"]), use_container_width=True)
-
