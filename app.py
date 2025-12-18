@@ -11,7 +11,7 @@ from workalendar.america.brazil import Brazil
 from reportlab.lib.pagesizes import A4, landscape
 from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer, Image
 from reportlab.lib import colors
-from reportlab.lib.styles import getSampleStyleSheet
+from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.lib.units import cm
 
 # =========================
@@ -32,7 +32,7 @@ cal = Brazil()
 def checar_senha_opcional():
     senha = st.secrets.get("APP_PASSWORD", None)
     if not senha:
-        return True  # sem senha configurada
+        return True
     with st.sidebar:
         st.markdown("### 🔒 Acesso")
         entrada = st.text_input("Senha", type="password")
@@ -53,7 +53,6 @@ def brl(v: float) -> str:
     return f"R$ {s}"
 
 def proximo_dia_util(d):
-    # seg-sex e não feriado BR
     while not cal.is_working_day(d):
         d += timedelta(days=1)
     return d
@@ -70,24 +69,26 @@ def normalizar_forma(s):
     return s
 
 def calcular_data_real(row):
-    """
-    REGRA QUE BATEU COM SEU EXCEL:
-    1) Normaliza vencimento para dia útil (se cair em fds/feriado)
-    2) Se BOLETO: cai D+1 útil (após o vencimento útil)
-    3) Caso contrário: fica no vencimento útil
-    """
+    # 1) Normaliza vencimento para dia útil
     venc = row["DATA_VENCIMENTO"]
     tipo = row["TIPO"]
     forma = row["FORMA_N"]
 
     venc_util = proximo_dia_util(venc)
 
+    # 2) Boleto: cai D+1 útil após vencimento útil
     if tipo == "RECEITA" and forma == "BOLETO":
         return proximo_dia_util_apos(venc_util)
 
+    # 3) Demais: no vencimento útil
     return venc_util
 
 def gerar_pdf_tabela(diario: pd.DataFrame, saldo_inicial: float) -> bytes:
+    """
+    PDF só da tabela, com cabeçalho alinhado:
+    - esquerda: título + infos
+    - direita: logo
+    """
     buffer = BytesIO()
     doc = SimpleDocTemplate(
         buffer,
@@ -99,39 +100,69 @@ def gerar_pdf_tabela(diario: pd.DataFrame, saldo_inicial: float) -> bytes:
     )
 
     styles = getSampleStyleSheet()
-    story = []
-
-    # Cabeçalho com logo (se existir) + título
-    header_has_logo = False
-    if os.path.exists(LOGO_LOCAL):
-        try:
-            img = Image(LOGO_LOCAL, width=5.5*cm, height=2.0*cm)
-            header_has_logo = True
-        except Exception:
-            header_has_logo = False
-
-    titulo = Paragraph("<b>Fluxo de Caixa Projetado</b>", styles["Title"])
-    subtitulo = Paragraph(
-        f"Saldo inicial: <b>{brl(saldo_inicial)}</b> &nbsp;&nbsp;|&nbsp;&nbsp; Gerado em: {datetime.now().strftime('%d/%m/%Y %H:%M')}",
-        styles["Normal"]
+    title_style = ParagraphStyle(
+        "TitleCustom",
+        parent=styles["Title"],
+        fontName="Helvetica-Bold",
+        fontSize=20,
+        leading=22,
+        spaceAfter=2,
+    )
+    info_style = ParagraphStyle(
+        "InfoCustom",
+        parent=styles["Normal"],
+        fontName="Helvetica",
+        fontSize=11,
+        leading=14,
+        textColor=colors.HexColor("#1f2937"),  # cinza escuro
     )
 
-    if header_has_logo:
-        t = Table([[img, titulo]], colWidths=[6.0*cm, 20.0*cm])
-        t.setStyle(TableStyle([
-            ("VALIGN", (0,0), (-1,-1), "MIDDLE"),
-            ("LEFTPADDING", (0,0), (-1,-1), 0),
-            ("RIGHTPADDING", (0,0), (-1,-1), 0),
-            ("TOPPADDING", (0,0), (-1,-1), 0),
-            ("BOTTOMPADDING", (0,0), (-1,-1), 0),
-        ]))
-        story.append(t)
-    else:
-        story.append(titulo)
+    story = []
 
-    story.append(subtitulo)
+    # ===== Header (melhorado) =====
+    titulo = Paragraph("Fluxo de Caixa Projetado", title_style)
+
+    info = Paragraph(
+        f"<b>Saldo inicial:</b> {brl(saldo_inicial)}<br/>"
+        f"<b>Gerado em:</b> {datetime.now().strftime('%d/%m/%Y %H:%M')}",
+        info_style
+    )
+
+    left_block = Table([[titulo], [info]], colWidths=[19.5*cm])
+    left_block.setStyle(TableStyle([
+        ("LEFTPADDING", (0,0), (-1,-1), 0),
+        ("RIGHTPADDING", (0,0), (-1,-1), 0),
+        ("TOPPADDING", (0,0), (-1,-1), 0),
+        ("BOTTOMPADDING", (0,0), (-1,-1), 0),
+        ("VALIGN", (0,0), (-1,-1), "TOP"),
+    ]))
+
+    logo_cell = ""
+    if os.path.exists(LOGO_LOCAL):
+        try:
+            # Logo maior e com proporção “bonita”
+            logo_cell = Image(LOGO_LOCAL, width=7.0*cm, height=2.6*cm)
+        except Exception:
+            logo_cell = ""
+
+    header = Table(
+        [[left_block, logo_cell]],
+        colWidths=[20.0*cm, 7.0*cm]  # esquerda + direita
+    )
+    header.setStyle(TableStyle([
+        ("VALIGN", (0,0), (0,0), "TOP"),
+        ("VALIGN", (1,0), (1,0), "TOP"),
+        ("ALIGN", (1,0), (1,0), "RIGHT"),
+        ("LEFTPADDING", (0,0), (-1,-1), 0),
+        ("RIGHTPADDING", (0,0), (-1,-1), 0),
+        ("TOPPADDING", (0,0), (-1,-1), 0),
+        ("BOTTOMPADDING", (0,0), (-1,-1), 2),
+    ]))
+
+    story.append(header)
     story.append(Spacer(1, 10))
 
+    # ===== Tabela =====
     data = [["Data", "Receita", "Despesa", "Saldo Final do Dia"]]
     for _, r in diario.iterrows():
         data.append([
@@ -182,7 +213,6 @@ def gerar_pdf_tabela(diario: pd.DataFrame, saldo_inicial: float) -> bytes:
 def preparar_df(df: pd.DataFrame) -> pd.DataFrame:
     df = df.copy()
     df.columns = df.columns.str.strip().str.upper()
-
     df = df.rename(columns={
         "DT. VENCIMENTO": "DATA_VENCIMENTO",
         "FORMA DE PAGAMENTO": "FORMA_PAGAMENTO"
