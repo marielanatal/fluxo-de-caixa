@@ -85,9 +85,10 @@ def calcular_data_real(row):
 def gerar_pdf_tabela(diario: pd.DataFrame, saldo_inicial: float) -> bytes:
     """
     PDF só da tabela.
-    Cabeçalho melhor:
-      - título + logo no topo
-      - bloco de info (saldo + gerado em) alinhado à largura da tabela (não ao título)
+    Cabeçalho:
+      - Título à esquerda e logo à direita
+      - Título alinhado na mesma altura do logo (VALIGN=MIDDLE)
+      - Bloco de info (saldo + gerado em) alinhado à largura da tabela
     """
     buffer = BytesIO()
 
@@ -102,7 +103,6 @@ def gerar_pdf_tabela(diario: pd.DataFrame, saldo_inicial: float) -> bytes:
 
     styles = getSampleStyleSheet()
 
-    # "Fonte melhor" no título (dentro do que o ReportLab tem nativo)
     title_style = ParagraphStyle(
         "TitleCustom",
         parent=styles["Title"],
@@ -129,17 +129,16 @@ def gerar_pdf_tabela(diario: pd.DataFrame, saldo_inicial: float) -> bytes:
 
     story = []
 
-    # ===== Larguras da tabela (também usadas pra alinhar o bloco de info) =====
+    # ===== Larguras da tabela (para alinhar o bloco de info) =====
     col_widths = [4.0*cm, 6.5*cm, 6.5*cm, 7.0*cm]
     largura_tabela = sum(col_widths)
 
-    # ===== Header: título (esquerda) + logo (direita) =====
+    # ===== Header: título + logo =====
     titulo = Paragraph("Fluxo de Caixa Projetado", title_style)
 
     logo_cell = ""
     if os.path.exists(LOGO_LOCAL):
         try:
-            # mantive a posição à direita e um tamanho “presente”
             logo_cell = Image(LOGO_LOCAL, width=7.0*cm, height=2.6*cm)
         except Exception:
             logo_cell = ""
@@ -149,7 +148,10 @@ def gerar_pdf_tabela(diario: pd.DataFrame, saldo_inicial: float) -> bytes:
         colWidths=[20.0*cm, 7.0*cm]
     )
     header.setStyle(TableStyle([
-        ("VALIGN", (0,0), (-1,-1), "TOP"),
+        # >>> AQUI: alinhamento vertical no meio (título na mesma altura do logo)
+        ("VALIGN", (0,0), (0,0), "MIDDLE"),
+        ("VALIGN", (1,0), (1,0), "MIDDLE"),
+
         ("ALIGN", (1,0), (1,0), "RIGHT"),
         ("LEFTPADDING", (0,0), (-1,-1), 0),
         ("RIGHTPADDING", (0,0), (-1,-1), 0),
@@ -159,14 +161,13 @@ def gerar_pdf_tabela(diario: pd.DataFrame, saldo_inicial: float) -> bytes:
     story.append(header)
     story.append(Spacer(1, 6))
 
-    # ===== Info alinhada à TABELA (não ao título) =====
+    # ===== Info alinhada à tabela =====
     info = Paragraph(
         f"<b>Saldo inicial:</b> {brl(saldo_inicial)} &nbsp;&nbsp;|&nbsp;&nbsp; "
         f"<b>Gerado em:</b> {datetime.now().strftime('%d/%m/%Y %H:%M')}",
         info_style
     )
 
-    # Um "container" com a mesma largura da tabela pra garantir alinhamento
     info_table = Table([[info]], colWidths=[largura_tabela])
     info_table.setStyle(TableStyle([
         ("LEFTPADDING", (0,0), (-1,-1), 0),
@@ -176,7 +177,7 @@ def gerar_pdf_tabela(diario: pd.DataFrame, saldo_inicial: float) -> bytes:
     ]))
     story.append(info_table)
 
-    # ===== Monta dados da tabela =====
+    # ===== Tabela =====
     data = [["Data", "Receita", "Despesa", "Saldo Final do Dia"]]
     for _, r in diario.iterrows():
         data.append([
