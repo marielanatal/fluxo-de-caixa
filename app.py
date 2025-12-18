@@ -1,36 +1,31 @@
 import streamlit as st
 import pandas as pd
-from workalendar.america.brazil import Brazil
 from datetime import timedelta
 import streamlit.components.v1 as components
+from workalendar.america.brazil import Brazil
 
 # =========================
-# CONFIGURAÇÃO
+# CONFIG
 # =========================
 st.set_page_config(page_title="Fluxo de Caixa Projetado", layout="wide")
 
 # =========================
 # TOPO
 # =========================
-col_title, col_logo = st.columns([3, 2])
-with col_title:
-    st.markdown("## 📊 Quadro de Fluxo de Caixa Diário")
-with col_logo:
-    st.image("logo.png", width=340)
+c1, c2 = st.columns([3, 2])
+with c1:
+    st.markdown("## 📊 Fluxo de Caixa Diário")
+with c2:
+    st.image("logo.png", width=320)
 
-# =========================
-# CONFIGURAÇÕES FIXAS
-# =========================
 URL_PLANILHA = "https://raw.githubusercontent.com/marielanatal/fluxo-de-caixa/main/fluxo.xlsx"
 cal = Brazil()
 
 # =========================
-# FUNÇÕES DE DATA (REGRA FINAL)
+# FUNÇÕES DE DATA (REGRA EXCEL)
 # =========================
-def ajustar_para_dia_util(data):
-    """Ajusta SOMENTE se cair em sábado, domingo ou feriado."""
-    if cal.is_working_day(data):
-        return data
+def proximo_dia_util(data):
+    """Garante que a data NÃO seja sábado/domingo (e também evita feriado BR)."""
     while not cal.is_working_day(data):
         data += timedelta(days=1)
     return data
@@ -39,36 +34,24 @@ def ajustar_para_dia_util(data):
 def calcular_data_real(row):
     data = row["DATA_VENCIMENTO"]
 
-    if row["TIPO"] == "RECEITA":
-        if row["NATUREZA"] == "BOLETO":
-            # boleto cai em D+1
-            data = data + timedelta(days=1)
-            data = ajustar_para_dia_util(data)
-        else:
-            # PIX / TED
-            data = ajustar_para_dia_util(data)
+    # BOLETO: cai D+1, depois joga para próximo dia útil (se cair em fds/feriado)
+    if row["TIPO"] == "RECEITA" and row["NATUREZA"] == "BOLETO":
+        data = data + timedelta(days=1)
 
-    elif row["TIPO"] == "DESPESA":
-        # despesa nunca soma dia, só ajusta se não for dia útil
-        data = ajustar_para_dia_util(data)
-
-    return data
+    # REGRA ÚNICA: ninguém pode cair em sábado/domingo (nem feriado)
+    return proximo_dia_util(data)
 
 
-def formatar_real(valor):
-    return f"R$ {valor:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
+def brl(v):
+    return f"R$ {v:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
 
 # =========================
 # INPUT
 # =========================
-saldo_inicial = st.number_input(
-    "Saldo atual em conta (hoje)",
-    value=0.0,
-    format="%.2f"
-)
+saldo_inicial = st.number_input("Saldo Inicial (Hoje)", value=0.0, format="%.2f")
 
 # =========================
-# LEITURA DA PLANILHA
+# LEITURA
 # =========================
 df = pd.read_excel(URL_PLANILHA)
 
@@ -79,117 +62,84 @@ df = df.rename(columns={
 })
 
 df["DATA_VENCIMENTO"] = pd.to_datetime(df["DATA_VENCIMENTO"]).dt.date
-df["TIPO"] = df["TIPO"].str.upper().str.strip()
+df["TIPO"] = df["TIPO"].astype(str).str.upper().str.strip()
 df["NATUREZA"] = df["NATUREZA"].astype(str).str.upper().str.strip()
 
 # =========================
-# DATA REAL (CORRIGIDA)
+# DATA REAL (SEM FIM DE SEMANA)
 # =========================
 df["DATA_REAL"] = df.apply(calcular_data_real, axis=1)
 df["DATA_REAL"] = pd.to_datetime(df["DATA_REAL"])
 
 # =========================
-# AGRUPAMENTO DIÁRIO
+# CONSOLIDAÇÃO DIÁRIA (SOMA POR DIA)
 # =========================
-receitas = (
-    df[df["TIPO"] == "RECEITA"]
-    .groupby("DATA_REAL")["VALOR"]
+diario = (
+    df.groupby(["DATA_REAL", "TIPO"])["VALOR"]
     .sum()
+    .unstack(fill_value=0)
+    .reset_index()
 )
 
-despesas = (
-    df[df["TIPO"] == "DESPESA"]
-    .groupby("DATA_REAL")["VALOR"]
-    .sum()
-)
-
-quadro = pd.concat([receitas, despesas], axis=1).fillna(0)
-quadro.columns = ["Receita", "Despesa"]
-quadro = quadro.sort_index().reset_index()
+diario["Receita"] = diario.get("RECEITA", 0)
+diario["Despesa"] = diario.get("DESPESA", 0)
+diario = diario[["DATA_REAL", "Receita", "Despesa"]].sort_values("DATA_REAL")
 
 # =========================
 # SALDO ENCADEADO (IGUAL AO EXCEL)
 # =========================
+saldo = saldo_inicial
 saldos = []
-saldo_atual = saldo_inicial
+for _, r in diario.iterrows():
+    saldo = saldo + r["Receita"] - r["Despesa"]
+    saldos.append(saldo)
 
-for _, row in quadro.iterrows():
-    saldo_atual = saldo_atual + row["Receita"] - row["Despesa"]
-    saldos.append(saldo_atual)
-
-quadro["Saldo Final do Dia"] = saldos
+diario["Saldo Final do Dia"] = saldos
 
 # =========================
 # RESUMOS
 # =========================
-c1, c2, c3 = st.columns(3)
-c1.metric("Saldo Inicial (Hoje)", formatar_real(saldo_inicial))
-c2.metric("Saldo Final Projetado", formatar_real(quadro["Saldo Final do Dia"].iloc[-1]))
-c3.metric(
-    "Resultado do Período",
-    formatar_real(quadro["Receita"].sum() - quadro["Despesa"].sum())
-)
+a, b, c = st.columns(3)
+a.metric("Saldo Inicial (Hoje)", brl(saldo_inicial))
+b.metric("Saldo Final Projetado", brl(diario["Saldo Final do Dia"].iloc[-1] if len(diario) else saldo_inicial))
+c.metric("Resultado do Período", brl(diario["Receita"].sum() - diario["Despesa"].sum()))
 
 st.markdown("---")
 
 # =========================
-# TABELA HTML (ESTILO TABELA REAL)
+# TABELA (COM LINHAS)
 # =========================
 html = """
 <style>
-table {
-    width: 100%;
-    border-collapse: collapse;
-    font-size: 16px;
-}
-th, td {
-    border: 1px solid #d0d7de;
-    padding: 10px;
-    text-align: center;
-}
-th {
-    background-color: #1f4fd8;
-    color: white;
-    font-weight: bold;
-}
-.neg {
-    color: red;
-    font-weight: bold;
-}
-.pos {
-    color: green;
-    font-weight: bold;
-}
+table { width:100%; border-collapse:collapse; font-size:16px }
+th, td { border:1px solid #ccc; padding:10px; text-align:center }
+th { background:#1f4fd8; color:white; font-weight:700 }
+.neg { color:red; font-weight:800 }
+.pos { color:green; font-weight:800 }
 </style>
-
 <table>
 <tr>
-    <th>Data</th>
-    <th>Receita</th>
-    <th>Despesa</th>
-    <th>Saldo Final do Dia</th>
+<th>Data</th><th>Receita</th><th>Despesa</th><th>Saldo Final do Dia</th>
 </tr>
 """
 
-for _, row in quadro.iterrows():
-    cls = "neg" if row["Saldo Final do Dia"] < 0 else "pos"
+for _, r in diario.iterrows():
+    cls = "neg" if r["Saldo Final do Dia"] < 0 else "pos"
     html += f"""
     <tr>
-        <td>{row['DATA_REAL'].strftime('%d/%m/%Y')}</td>
-        <td>{formatar_real(row['Receita'])}</td>
-        <td>{formatar_real(row['Despesa'])}</td>
-        <td class="{cls}">{formatar_real(row['Saldo Final do Dia'])}</td>
+        <td>{r['DATA_REAL'].strftime('%d/%m/%Y')}</td>
+        <td>{brl(r['Receita'])}</td>
+        <td>{brl(r['Despesa'])}</td>
+        <td class="{cls}">{brl(r['Saldo Final do Dia'])}</td>
     </tr>
     """
 
 html += "</table>"
-
-components.html(html, height=650, scrolling=True)
+components.html(html, height=600, scrolling=True)
 
 # =========================
-# GRÁFICO (SALDO PROJETADO)
+# GRÁFICO
 # =========================
-st.line_chart(
-    quadro.set_index("DATA_REAL")["Saldo Final do Dia"]
-)
+if len(diario):
+    st.line_chart(diario.set_index("DATA_REAL")["Saldo Final do Dia"])
 
