@@ -19,10 +19,30 @@ from reportlab.lib.units import cm
 # =========================
 st.set_page_config(page_title="Fluxo de Caixa Projetado", layout="wide")
 
-PLANILHA_LOCAL = "fluxo.xlsx"   # no repo
-LOGO_LOCAL = "logo.png"        # opcional
+PLANILHA_LOCAL = "fluxo.xlsx"   # fallback (no repo)
+LOGO_LOCAL = "logo.png"        # opcional (no repo)
 
 cal = Brazil()
+
+# =========================
+# SEGURANÇA OPCIONAL (senha via Secrets)
+# No Streamlit Cloud: Settings > Secrets
+# APP_PASSWORD = "sua_senha"
+# =========================
+def checar_senha_opcional():
+    senha = st.secrets.get("APP_PASSWORD", None)
+    if not senha:
+        return True  # sem senha configurada
+    with st.sidebar:
+        st.markdown("### 🔒 Acesso")
+        entrada = st.text_input("Senha", type="password")
+    if entrada != senha:
+        st.warning("Digite a senha para acessar o painel.")
+        return False
+    return True
+
+if not checar_senha_opcional():
+    st.stop()
 
 # =========================
 # FUNÇÕES
@@ -51,9 +71,9 @@ def normalizar_forma(s):
 
 def calcular_data_real(row):
     """
-    REGRA FINAL QUE BATEU COM SEU EXCEL:
-    1) Normaliza vencimento para dia útil
-    2) Se BOLETO: aplica D+1 útil (após o vencimento útil)
+    REGRA QUE BATEU COM SEU EXCEL:
+    1) Normaliza vencimento para dia útil (se cair em fds/feriado)
+    2) Se BOLETO: cai D+1 útil (após o vencimento útil)
     3) Caso contrário: fica no vencimento útil
     """
     venc = row["DATA_VENCIMENTO"]
@@ -67,36 +87,7 @@ def calcular_data_real(row):
 
     return venc_util
 
-@st.cache_data(show_spinner=False)
-def carregar_planilha(path):
-    df = pd.read_excel(path)
-    df.columns = df.columns.str.strip().str.upper()
-
-    df = df.rename(columns={
-        "DT. VENCIMENTO": "DATA_VENCIMENTO",
-        "FORMA DE PAGAMENTO": "FORMA_PAGAMENTO"
-    })
-
-    obrig = {"TIPO", "DATA_VENCIMENTO", "VALOR", "FORMA_PAGAMENTO"}
-    faltando = obrig - set(df.columns)
-    if faltando:
-        raise ValueError(f"Faltam colunas na planilha: {', '.join(sorted(faltando))}")
-
-    df["TIPO"] = df["TIPO"].astype(str).str.upper().str.strip()
-    df["DATA_VENCIMENTO"] = pd.to_datetime(df["DATA_VENCIMENTO"]).dt.date
-    df["VALOR"] = pd.to_numeric(df["VALOR"], errors="coerce").fillna(0.0)
-    df["FORMA_N"] = df["FORMA_PAGAMENTO"].apply(normalizar_forma)
-
-    df["DATA_REAL"] = df.apply(calcular_data_real, axis=1)
-    df["DATA_REAL"] = pd.to_datetime(df["DATA_REAL"])
-
-    return df
-
 def gerar_pdf_tabela(diario: pd.DataFrame, saldo_inicial: float) -> bytes:
-    """
-    Gera PDF somente da tabela (Data, Receita, Despesa, Saldo Final do Dia),
-    com estilo “corporativo” e saldo negativo em vermelho.
-    """
     buffer = BytesIO()
     doc = SimpleDocTemplate(
         buffer,
@@ -111,13 +102,13 @@ def gerar_pdf_tabela(diario: pd.DataFrame, saldo_inicial: float) -> bytes:
     story = []
 
     # Cabeçalho com logo (se existir) + título
-    header = []
+    header_has_logo = False
     if os.path.exists(LOGO_LOCAL):
         try:
             img = Image(LOGO_LOCAL, width=5.5*cm, height=2.0*cm)
-            header.append(img)
+            header_has_logo = True
         except Exception:
-            pass
+            header_has_logo = False
 
     titulo = Paragraph("<b>Fluxo de Caixa Projetado</b>", styles["Title"])
     subtitulo = Paragraph(
@@ -125,9 +116,8 @@ def gerar_pdf_tabela(diario: pd.DataFrame, saldo_inicial: float) -> bytes:
         styles["Normal"]
     )
 
-    if header:
-        # logo + titulo lado a lado
-        t = Table([[header[0], titulo]], colWidths=[6.0*cm, 20.0*cm])
+    if header_has_logo:
+        t = Table([[img, titulo]], colWidths=[6.0*cm, 20.0*cm])
         t.setStyle(TableStyle([
             ("VALIGN", (0,0), (-1,-1), "MIDDLE"),
             ("LEFTPADDING", (0,0), (-1,-1), 0),
@@ -142,7 +132,6 @@ def gerar_pdf_tabela(diario: pd.DataFrame, saldo_inicial: float) -> bytes:
     story.append(subtitulo)
     story.append(Spacer(1, 10))
 
-    # Monta dados da tabela
     data = [["Data", "Receita", "Despesa", "Saldo Final do Dia"]]
     for _, r in diario.iterrows():
         data.append([
@@ -152,11 +141,9 @@ def gerar_pdf_tabela(diario: pd.DataFrame, saldo_inicial: float) -> bytes:
             brl(float(r["Saldo Final do Dia"])),
         ])
 
-    # Larguras (paisagem A4)
     col_widths = [4.0*cm, 6.5*cm, 6.5*cm, 7.0*cm]
     table = Table(data, colWidths=col_widths, repeatRows=1)
 
-    # Estilo base
     style = TableStyle([
         ("BACKGROUND", (0,0), (-1,0), colors.HexColor("#1f4fd8")),
         ("TEXTCOLOR", (0,0), (-1,0), colors.white),
@@ -177,7 +164,6 @@ def gerar_pdf_tabela(diario: pd.DataFrame, saldo_inicial: float) -> bytes:
         ("BOTTOMPADDING", (0,0), (-1,-1), 8),
     ])
 
-    # Saldo negativo em vermelho / positivo em verde
     for i in range(1, len(data)):
         saldo_val = float(diario.iloc[i-1]["Saldo Final do Dia"])
         if saldo_val < 0:
@@ -193,8 +179,40 @@ def gerar_pdf_tabela(diario: pd.DataFrame, saldo_inicial: float) -> bytes:
     doc.build(story)
     return buffer.getvalue()
 
+def preparar_df(df: pd.DataFrame) -> pd.DataFrame:
+    df = df.copy()
+    df.columns = df.columns.str.strip().str.upper()
+
+    df = df.rename(columns={
+        "DT. VENCIMENTO": "DATA_VENCIMENTO",
+        "FORMA DE PAGAMENTO": "FORMA_PAGAMENTO"
+    })
+
+    obrig = {"TIPO", "DATA_VENCIMENTO", "VALOR", "FORMA_PAGAMENTO"}
+    faltando = obrig - set(df.columns)
+    if faltando:
+        raise ValueError(f"Faltam colunas na planilha: {', '.join(sorted(faltando))}")
+
+    df["TIPO"] = df["TIPO"].astype(str).str.upper().str.strip()
+    df["DATA_VENCIMENTO"] = pd.to_datetime(df["DATA_VENCIMENTO"]).dt.date
+    df["VALOR"] = pd.to_numeric(df["VALOR"], errors="coerce").fillna(0.0)
+    df["FORMA_N"] = df["FORMA_PAGAMENTO"].apply(normalizar_forma)
+
+    df["DATA_REAL"] = df.apply(calcular_data_real, axis=1)
+    df["DATA_REAL"] = pd.to_datetime(df["DATA_REAL"])
+    return df
+
+@st.cache_data(show_spinner=False)
+def carregar_planilha_local(path: str) -> pd.DataFrame:
+    return preparar_df(pd.read_excel(path))
+
+@st.cache_data(show_spinner=False)
+def carregar_planilha_upload(conteudo_bytes: bytes) -> pd.DataFrame:
+    bio = BytesIO(conteudo_bytes)
+    return preparar_df(pd.read_excel(bio))
+
 # =========================
-# TOPO
+# UI TOPO
 # =========================
 col_titulo, col_logo = st.columns([3, 2])
 with col_titulo:
@@ -204,18 +222,34 @@ with col_logo:
         st.image(LOGO_LOCAL, width=320)
 
 # =========================
-# SALDO INICIAL
+# UPLOAD (terceirização)
 # =========================
+with st.sidebar:
+    st.markdown("### 📥 Envio da planilha")
+    up = st.file_uploader("Envie o fluxo.xlsx", type=["xlsx"])
+    st.caption("Se ninguém enviar, o app usa o fluxo.xlsx do repositório.")
+
 saldo_inicial = st.number_input("Saldo Inicial (Hoje)", value=0.0, format="%.2f")
 
 # =========================
-# LEITURA (AUTOMÁTICA)
+# LEITURA (upload > fallback)
 # =========================
-if not os.path.exists(PLANILHA_LOCAL):
-    st.error(f"Não achei o arquivo **{PLANILHA_LOCAL}** no repositório. Coloque ele na raiz (junto do app.py).")
+try:
+    if up is not None:
+        df = carregar_planilha_upload(up.getvalue())
+        origem = "Upload"
+    else:
+        if not os.path.exists(PLANILHA_LOCAL):
+            st.error(f"Não achei o arquivo **{PLANILHA_LOCAL}** no repositório. Suba pela lateral ou coloque na raiz do projeto.")
+            st.stop()
+        df = carregar_planilha_local(PLANILHA_LOCAL)
+        origem = "Repositório"
+except Exception as e:
+    st.error("Erro ao processar a planilha.")
+    st.exception(e)
     st.stop()
 
-df = carregar_planilha(PLANILHA_LOCAL)
+st.caption(f"Fonte dos dados: **{origem}**")
 
 # =========================
 # CONSOLIDAÇÃO DIÁRIA
@@ -250,7 +284,7 @@ c.metric("Resultado do Período", brl(diario["Receita"].sum() - diario["Despesa"
 st.markdown("---")
 
 # =========================
-# BOTÃO PDF (SÓ TABELA)
+# BOTÃO PDF
 # =========================
 pdf_bytes = gerar_pdf_tabela(diario, saldo_inicial)
 nome_pdf = f"Fluxo_Caixa_{datetime.now().strftime('%d-%m-%Y')}.pdf"
@@ -303,3 +337,4 @@ components.html(html, height=650, scrolling=True)
 # =========================
 if len(diario):
     st.line_chart(diario.set_index("DATA_REAL")["Saldo Final do Dia"])
+
