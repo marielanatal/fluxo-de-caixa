@@ -26,7 +26,6 @@ cal = Brazil()
 
 # =========================
 # SEGURANÇA OPCIONAL (senha via Secrets)
-# No Streamlit Cloud: Settings > Secrets
 # APP_PASSWORD = "sua_senha"
 # =========================
 def checar_senha_opcional():
@@ -69,100 +68,115 @@ def normalizar_forma(s):
     return s
 
 def calcular_data_real(row):
-    # 1) Normaliza vencimento para dia útil
+    # 1) normaliza vencimento para dia útil
     venc = row["DATA_VENCIMENTO"]
     tipo = row["TIPO"]
     forma = row["FORMA_N"]
 
     venc_util = proximo_dia_util(venc)
 
-    # 2) Boleto: cai D+1 útil após vencimento útil
+    # 2) boleto: cai D+1 útil após vencimento útil
     if tipo == "RECEITA" and forma == "BOLETO":
         return proximo_dia_util_apos(venc_util)
 
-    # 3) Demais: no vencimento útil
+    # 3) demais: no vencimento útil
     return venc_util
 
 def gerar_pdf_tabela(diario: pd.DataFrame, saldo_inicial: float) -> bytes:
     """
-    PDF só da tabela, com cabeçalho alinhado:
-    - esquerda: título + infos
-    - direita: logo
+    PDF só da tabela.
+    Cabeçalho melhor:
+      - título + logo no topo
+      - bloco de info (saldo + gerado em) alinhado à largura da tabela (não ao título)
     """
     buffer = BytesIO()
+
     doc = SimpleDocTemplate(
         buffer,
         pagesize=landscape(A4),
-        leftMargin=1.2*cm,
-        rightMargin=1.2*cm,
-        topMargin=1.0*cm,
-        bottomMargin=1.0*cm
+        leftMargin=1.2 * cm,
+        rightMargin=1.2 * cm,
+        topMargin=1.0 * cm,
+        bottomMargin=1.0 * cm
     )
 
     styles = getSampleStyleSheet()
+
+    # "Fonte melhor" no título (dentro do que o ReportLab tem nativo)
     title_style = ParagraphStyle(
         "TitleCustom",
         parent=styles["Title"],
         fontName="Helvetica-Bold",
-        fontSize=20,
-        leading=22,
-        spaceAfter=2,
+        fontSize=22,
+        leading=24,
+        textColor=colors.HexColor("#0b2f6a"),
+        leftIndent=0,
+        spaceAfter=0,
+        spaceBefore=0,
     )
+
     info_style = ParagraphStyle(
         "InfoCustom",
         parent=styles["Normal"],
         fontName="Helvetica",
         fontSize=11,
         leading=14,
-        textColor=colors.HexColor("#1f2937"),  # cinza escuro
+        textColor=colors.HexColor("#111827"),
+        leftIndent=0,
+        spaceAfter=0,
+        spaceBefore=0,
     )
 
     story = []
 
-    # ===== Header (melhorado) =====
+    # ===== Larguras da tabela (também usadas pra alinhar o bloco de info) =====
+    col_widths = [4.0*cm, 6.5*cm, 6.5*cm, 7.0*cm]
+    largura_tabela = sum(col_widths)
+
+    # ===== Header: título (esquerda) + logo (direita) =====
     titulo = Paragraph("Fluxo de Caixa Projetado", title_style)
-
-    info = Paragraph(
-        f"<b>Saldo inicial:</b> {brl(saldo_inicial)}<br/>"
-        f"<b>Gerado em:</b> {datetime.now().strftime('%d/%m/%Y %H:%M')}",
-        info_style
-    )
-
-    left_block = Table([[titulo], [info]], colWidths=[19.5*cm])
-    left_block.setStyle(TableStyle([
-        ("LEFTPADDING", (0,0), (-1,-1), 0),
-        ("RIGHTPADDING", (0,0), (-1,-1), 0),
-        ("TOPPADDING", (0,0), (-1,-1), 0),
-        ("BOTTOMPADDING", (0,0), (-1,-1), 0),
-        ("VALIGN", (0,0), (-1,-1), "TOP"),
-    ]))
 
     logo_cell = ""
     if os.path.exists(LOGO_LOCAL):
         try:
-            # Logo maior e com proporção “bonita”
+            # mantive a posição à direita e um tamanho “presente”
             logo_cell = Image(LOGO_LOCAL, width=7.0*cm, height=2.6*cm)
         except Exception:
             logo_cell = ""
 
     header = Table(
-        [[left_block, logo_cell]],
-        colWidths=[20.0*cm, 7.0*cm]  # esquerda + direita
+        [[titulo, logo_cell]],
+        colWidths=[20.0*cm, 7.0*cm]
     )
     header.setStyle(TableStyle([
-        ("VALIGN", (0,0), (0,0), "TOP"),
-        ("VALIGN", (1,0), (1,0), "TOP"),
+        ("VALIGN", (0,0), (-1,-1), "TOP"),
         ("ALIGN", (1,0), (1,0), "RIGHT"),
         ("LEFTPADDING", (0,0), (-1,-1), 0),
         ("RIGHTPADDING", (0,0), (-1,-1), 0),
         ("TOPPADDING", (0,0), (-1,-1), 0),
         ("BOTTOMPADDING", (0,0), (-1,-1), 2),
     ]))
-
     story.append(header)
-    story.append(Spacer(1, 10))
+    story.append(Spacer(1, 6))
 
-    # ===== Tabela =====
+    # ===== Info alinhada à TABELA (não ao título) =====
+    info = Paragraph(
+        f"<b>Saldo inicial:</b> {brl(saldo_inicial)} &nbsp;&nbsp;|&nbsp;&nbsp; "
+        f"<b>Gerado em:</b> {datetime.now().strftime('%d/%m/%Y %H:%M')}",
+        info_style
+    )
+
+    # Um "container" com a mesma largura da tabela pra garantir alinhamento
+    info_table = Table([[info]], colWidths=[largura_tabela])
+    info_table.setStyle(TableStyle([
+        ("LEFTPADDING", (0,0), (-1,-1), 0),
+        ("RIGHTPADDING", (0,0), (-1,-1), 0),
+        ("TOPPADDING", (0,0), (-1,-1), 0),
+        ("BOTTOMPADDING", (0,0), (-1,-1), 8),
+    ]))
+    story.append(info_table)
+
+    # ===== Monta dados da tabela =====
     data = [["Data", "Receita", "Despesa", "Saldo Final do Dia"]]
     for _, r in diario.iterrows():
         data.append([
@@ -172,7 +186,6 @@ def gerar_pdf_tabela(diario: pd.DataFrame, saldo_inicial: float) -> bytes:
             brl(float(r["Saldo Final do Dia"])),
         ])
 
-    col_widths = [4.0*cm, 6.5*cm, 6.5*cm, 7.0*cm]
     table = Table(data, colWidths=col_widths, repeatRows=1)
 
     style = TableStyle([
@@ -213,6 +226,7 @@ def gerar_pdf_tabela(diario: pd.DataFrame, saldo_inicial: float) -> bytes:
 def preparar_df(df: pd.DataFrame) -> pd.DataFrame:
     df = df.copy()
     df.columns = df.columns.str.strip().str.upper()
+
     df = df.rename(columns={
         "DT. VENCIMENTO": "DATA_VENCIMENTO",
         "FORMA DE PAGAMENTO": "FORMA_PAGAMENTO"
@@ -252,7 +266,7 @@ with col_logo:
         st.image(LOGO_LOCAL, width=320)
 
 # =========================
-# UPLOAD (terceirização)
+# UPLOAD
 # =========================
 with st.sidebar:
     st.markdown("### 📥 Envio da planilha")
