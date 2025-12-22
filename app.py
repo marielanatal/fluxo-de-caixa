@@ -1,6 +1,7 @@
 import os
 from io import BytesIO
 from datetime import timedelta, datetime
+from zoneinfo import ZoneInfo
 
 import pandas as pd
 import streamlit as st
@@ -88,7 +89,8 @@ def gerar_pdf_tabela(diario: pd.DataFrame, saldo_inicial: float) -> bytes:
     Cabeçalho:
       - Título à esquerda e logo à direita
       - Título alinhado na mesma altura do logo (VALIGN=MIDDLE)
-      - Bloco de info (saldo + gerado em) alinhado à largura da tabela
+      - Info (saldo + gerado em) alinhada à largura da tabela
+      - Hora correta do Brasil (America/Sao_Paulo)
     """
     buffer = BytesIO()
 
@@ -148,10 +150,8 @@ def gerar_pdf_tabela(diario: pd.DataFrame, saldo_inicial: float) -> bytes:
         colWidths=[20.0*cm, 7.0*cm]
     )
     header.setStyle(TableStyle([
-        # >>> AQUI: alinhamento vertical no meio (título na mesma altura do logo)
         ("VALIGN", (0,0), (0,0), "MIDDLE"),
         ("VALIGN", (1,0), (1,0), "MIDDLE"),
-
         ("ALIGN", (1,0), (1,0), "RIGHT"),
         ("LEFTPADDING", (0,0), (-1,-1), 0),
         ("RIGHTPADDING", (0,0), (-1,-1), 0),
@@ -161,10 +161,13 @@ def gerar_pdf_tabela(diario: pd.DataFrame, saldo_inicial: float) -> bytes:
     story.append(header)
     story.append(Spacer(1, 6))
 
+    # >>> HORA CERTA (BRASIL)
+    agora_br = datetime.now(ZoneInfo("America/Sao_Paulo"))
+
     # ===== Info alinhada à tabela =====
     info = Paragraph(
         f"<b>Saldo inicial:</b> {brl(saldo_inicial)} &nbsp;&nbsp;|&nbsp;&nbsp; "
-        f"<b>Gerado em:</b> {datetime.now().strftime('%d/%m/%Y %H:%M')}",
+        f"<b>Gerado em:</b> {agora_br.strftime('%d/%m/%Y %H:%M')}",
         info_style
     )
 
@@ -332,7 +335,7 @@ st.markdown("---")
 # BOTÃO PDF
 # =========================
 pdf_bytes = gerar_pdf_tabela(diario, saldo_inicial)
-nome_pdf = f"Fluxo_Caixa_{datetime.now().strftime('%d-%m-%Y')}.pdf"
+nome_pdf = f"Fluxo_Caixa_{datetime.now(ZoneInfo('America/Sao_Paulo')).strftime('%d-%m-%Y')}.pdf"
 
 st.download_button(
     label="📄 Baixar PDF da Tabela",
@@ -382,4 +385,5 @@ components.html(html, height=650, scrolling=True)
 # =========================
 if len(diario):
     st.line_chart(diario.set_index("DATA_REAL")["Saldo Final do Dia"])
+
 
